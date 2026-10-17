@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using BridgeBuilder.Core;
@@ -24,7 +25,9 @@ namespace BridgeBuilder.Game
         volatile int _previewTicket;
 
         RunSnapshot _back = new RunSnapshot(), _ready = new RunSnapshot(), _front = new RunSnapshot();
+        double[] _backBuckling = new double[0], _readyBuckling = new double[0], _frontBuckling = new double[0];
         bool _hasNew;
+        readonly List<(CompiledBridge bridge, FailureReport report)> _failures = new List<(CompiledBridge, FailureReport)>();
         (CompiledBridge bridge, PreviewResult result) _previewReady;
 
         // The live solver benchmark (spec 2.12): measured on the headset.
@@ -77,10 +80,28 @@ namespace BridgeBuilder.Game
                 if (_hasNew)
                 {
                     (_ready, _front) = (_front, _ready);
+                    (_readyBuckling, _frontBuckling) = (_frontBuckling, _readyBuckling);
                     _hasNew = false;
                 }
             }
             return _front;
+        }
+
+        /// <summary>Buckling utilization per member for the snapshot Latest() last returned (W4-07 bowing).</summary>
+        public double[] LatestBuckling => _frontBuckling;
+
+        /// <summary>Moves the failure reports (W4-05) for this run since the last call into the list.</summary>
+        public void TakeFailures(CompiledBridge bridge, List<FailureReport> into)
+        {
+            lock (_lock)
+            {
+                foreach (var (b, report) in _failures)
+                {
+                    if (b == bridge)
+                        into.Add(report);
+                }
+                _failures.Clear();
+            }
         }
 
         public bool TakePreview(out CompiledBridge bridge, out PreviewResult result)
@@ -96,6 +117,8 @@ namespace BridgeBuilder.Game
         void Loop()
         {
             BridgeRun run = null;
+            FailureTracker tracker = null;
+            long step = 0;
             var clock = Stopwatch.StartNew();
             var timer = new Stopwatch();
             double next = 0, dt = 1.0 / Constants.Dynamics.SolverRateHz;
@@ -130,6 +153,9 @@ namespace BridgeBuilder.Game
                         timer.Restart();
                         run = new BridgeRun(start, config, floor);
                         StartMs = (float)timer.Elapsed.TotalMilliseconds;
+                        tracker = new FailureTracker(start.Input, start.Input.ScaleFactor > 0 ? start.Input.ScaleFactor : 1.0);
+                        step = 0;
+                        Report(run, tracker.Observe(run.Coupled.Frame, step));   // broke while settling
                         Members = start.Input.Members.Count;
                         next = clock.Elapsed.TotalSeconds;
                         Publish(run);
@@ -156,6 +182,7 @@ namespace BridgeBuilder.Game
                             timer.Restart();
                             run.Step(dt);
                             StepMs = (float)timer.Elapsed.TotalMilliseconds;
+                            Report(run, tracker.Observe(run.Coupled.Frame, ++step));
                             next += dt;
                             steps++;
                         }
@@ -181,11 +208,26 @@ namespace BridgeBuilder.Game
         void Publish(BridgeRun run)
         {
             run.Write(_back);
+            if (run.Coupled.Frame is FrameDynamics frame)
+            {
+                if (_backBuckling.Length != frame.BucklingUtilization.Length)
+                    _backBuckling = new double[frame.BucklingUtilization.Length];
+                Array.Copy(frame.BucklingUtilization, _backBuckling, _backBuckling.Length);
+            }
             lock (_lock)
             {
                 (_back, _ready) = (_ready, _back);
+                (_backBuckling, _readyBuckling) = (_readyBuckling, _backBuckling);
                 _hasNew = true;
             }
+        }
+
+        void Report(BridgeRun run, FailureReport report)
+        {
+            if (report == null)
+                return;
+            lock (_lock)
+                _failures.Add((run.Bridge, report));
         }
 
         public void Dispose()

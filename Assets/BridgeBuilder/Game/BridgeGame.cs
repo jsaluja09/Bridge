@@ -29,6 +29,8 @@ namespace BridgeBuilder.Game
         CarView _car;
         SimWorker _worker;
         PreviewScheduler _scheduler;
+        FailureFx _fx;
+        readonly List<FailureReport> _newFailures = new List<FailureReport>();
 
         readonly ChallengeConfig[] _challenges = ChallengeConfig.Defaults();
         int _challengeIndex;
@@ -59,6 +61,9 @@ namespace BridgeBuilder.Game
             _pointer = GetComponent<ControllerPointer>();
             _view = GetComponent<BridgeView>();
             _car = GetComponent<CarView>();
+            _fx = GetComponent<FailureFx>();
+            if (_fx == null)
+                _fx = gameObject.AddComponent<FailureFx>();
             CreateFeedback();
             _worker = new SimWorker();
             _scheduler = new PreviewScheduler(new UnityClock(), () =>
@@ -199,6 +204,7 @@ namespace BridgeBuilder.Game
             _runBridge = BridgeCompiler.Compile(_model.Copy(), _pads, Scale);
             var config = Challenge.ToRunConfiguration(_start, _pads[_start.Start].Across, Scale);
             _worker.StartRun(_runBridge, config, _floor);
+            _fx.Begin(_runBridge, _floor);
             _snapshot = null;
             _lastLost = 0;
             _shownResult = RunResult.Running;
@@ -212,6 +218,9 @@ namespace BridgeBuilder.Game
         {
             var latest = _worker.Latest();
             _snapshot = latest.Bridge == _runBridge ? latest : null;
+            _newFailures.Clear();
+            _worker.TakeFailures(_runBridge, _newFailures);
+            _fx.Advance(_snapshot, _newFailures);
 
             if (_snapshot != null)
             {
@@ -239,6 +248,8 @@ namespace BridgeBuilder.Game
             {
                 _worker.StopRun();
                 _car.Hide();
+                _fx.Clear();
+                HudMessages.Clear();
                 _snapshot = null;
                 _phase = Phase.Build;
             }
