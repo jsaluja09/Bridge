@@ -1,21 +1,49 @@
 {
   "name": "Fixture 2: fixed-end beams",
-  "note": "Stub: geometry only (room units, Y up), with no loads, sections, or expected answers. Line 1 is a cantilever fixed at node 1. Line 2 is a beam fixed at both ends (nodes 3 and 5) made of two colinear members. The issue that owns this file replaces the stub and deletes \"stub\": true, which ends the stub-only checks in ScaffoldTests.",
-  "stub": true,
+  "note": "do not modify without human approval",
+  "description": "Issue W1-01. Spec section 5 says simply supported, which contradicts section 2.5 (all supports use one fixed condition), so this fixture holds two fixed-end cases. Each case is its own bridge, solved alone from the members of its line: line 1 is the cantilever, and line 2 is the fixed-fixed beam made of two colinear members. Both start at the origin as the issue states, so nodes 1 and 11 coincide but share no member. Positions are solver lengths in meters, and tests use scale factor 1. Section G and J are fixture-local values that keep the unused torsion blocks nonsingular; they are not game constants. Expected displacements are signed, in m; expected moments and shears are magnitudes, in N*m and N.",
   "nodes": [
     { "id": 1, "position": [0.0, 0.0, 0.0], "fixed": true },
     { "id": 2, "position": [3.0, 0.0, 0.0], "fixed": false },
-    { "id": 3, "position": [0.0, 0.0, 2.0], "fixed": true },
-    { "id": 4, "position": [2.0, 0.0, 2.0], "fixed": false },
-    { "id": 5, "position": [4.0, 0.0, 2.0], "fixed": true }
+    { "id": 11, "position": [0.0, 0.0, 0.0], "fixed": true },
+    { "id": 12, "position": [2.0, 0.0, 0.0], "fixed": false },
+    { "id": 13, "position": [4.0, 0.0, 0.0], "fixed": true }
   ],
   "members": [
-    { "id": 1, "nodeA": 1, "nodeB": 2, "lineId": 1 },
-    { "id": 2, "nodeA": 3, "nodeB": 4, "lineId": 2 },
-    { "id": 3, "nodeA": 4, "nodeB": 5, "lineId": 2 }
+    { "id": 1, "nodeA": 1, "nodeB": 2, "sectionId": 1, "lineId": 1 },
+    { "id": 11, "nodeA": 11, "nodeB": 12, "sectionId": 2, "lineId": 2 },
+    { "id": 12, "nodeA": 12, "nodeB": 13, "sectionId": 2, "lineId": 2 }
   ],
   "lines": [
     { "id": 1, "memberIds": [1] },
-    { "id": 2, "memberIds": [2, 3] }
-  ]
+    { "id": 2, "memberIds": [11, 12] }
+  ],
+  "sections": [
+    { "id": 1, "e": 2.0e11, "g": 1.0e11, "a": 1.0e-3, "iy": 8.0e-6, "iz": 8.0e-6, "j": 1.0e-6 },
+    { "id": 2, "e": 2.0e11, "g": 1.0e11, "a": 1.0e-3, "iy": 1.0e-5, "iz": 1.0e-5, "j": 1.0e-6 }
+  ],
+  "cantilever": {
+    "lineId": 1,
+    "memberId": 1,
+    "fixedNodeId": 1,
+    "tipNodeId": 2,
+    "loads": [ { "nodeId": 2, "force": [0.0, 0.0, 16000.0] } ],
+    "expectedTipDisplacement": [0.0, 0.0, 0.09],
+    "expectedFixedEndMoment": 48000.0,
+    "expectedFixedEndShear": 16000.0,
+    "expectedAxial": 0.0,
+    "expectedFreeEndMoment": 0.0
+  },
+  "fixedFixed": {
+    "lineId": 2,
+    "firstMemberId": 11,
+    "secondMemberId": 12,
+    "firstFixedNodeId": 11,
+    "midspanNodeId": 12,
+    "secondFixedNodeId": 13,
+    "loads": [ { "nodeId": 12, "force": [0.0, 0.0, 60000.0] } ],
+    "expectedMidspanDisplacementZ": 0.01,
+    "expectedMoment": 30000.0,
+    "expectedSupportShear": 30000.0
+  }
 }
