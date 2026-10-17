@@ -165,14 +165,16 @@ namespace BridgeBuilder.Core
         }
 
         /// <summary>Stars (spec 2.9): pass = 1, no members lost = 2, plus peak under 80% and a quarter of the budget left = 3.</summary>
-        public int Stars(float budgetUsedFraction)
+        public int Stars(float budgetUsedFraction) => StarsFor(Result, BrokenCount, PeakUtilization, budgetUsedFraction);
+
+        public static int StarsFor(RunResult result, int broken, float peakUtilization, float budgetUsedFraction)
         {
-            if (Result != RunResult.Passed)
+            if (result != RunResult.Passed)
                 return 0;
             int stars = 1;
-            if (BrokenCount == 0)
+            if (broken == 0)
                 stars++;
-            if (stars == 2 && PeakUtilization < 0.8f && budgetUsedFraction <= 0.75f)
+            if (stars == 2 && peakUtilization < 0.8f && budgetUsedFraction <= 0.75f)
                 stars++;
             return stars;
         }

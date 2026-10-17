@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 
 namespace BridgeBuilder.Core
@@ -103,13 +104,74 @@ namespace BridgeBuilder.Core
             Vector3 mid0 = (startA + startB) * 0.5f, mid1 = (farA + farB) * 0.5f;
             d.Frame = new BridgeFrame(mid0, mid1 - mid0, Vector3.UnitY);
 
-            d.SetupSurface(0, startA, startB, mid1);
-            d.SetupSurface(1, farA, farB, mid0);
+            d.SetupSurface(0, startA, startB, mid1, true);
+            d.SetupSurface(1, farA, farB, mid0, true);
             d.SetupGround(new[] { startA, startB, farA, farB });
             return d;
         }
 
-        void SetupSurface(int index, Vector3 a, Vector3 b, Vector3 otherMid)
+        /// <summary>Plain-data copy for JSON test bridges and saved designs (spec section 3). Not used in the hot path.</summary>
+        public BridgeDesignData ToData()
+        {
+            var data = new BridgeDesignData
+            {
+                Taps = new[] { Surfaces[0].EdgeA, Surfaces[0].EdgeB, Surfaces[1].EdgeA, Surfaces[1].EdgeB }.SelectMany(XYZ).ToArray(),
+                GroundY = GroundY,
+                StartSurface = StartSurface,
+                NextId = _nextId,
+            };
+            foreach (var n in Nodes)
+                data.Nodes.Add(new BridgeDesignData.NodeData { Id = n.Id, Position = XYZ(n.Position), Kind = n.Kind, Surface = n.Surface, OwnerLine = n.OwnerLine });
+            foreach (var l in Lines)
+                data.Lines.Add(new BridgeDesignData.LineData { Id = l.Id, Shape = l.Shape, Nodes = new List<int>(l.Nodes), Section = l.Section });
+            foreach (var f in Fills)
+            {
+                data.Fills.Add(new BridgeDesignData.FillData
+                {
+                    Id = f.Id, Corners = new List<int>(f.Corners), Boundary = new List<int>(f.Boundary), Triangles = new List<int>(f.Triangles),
+                    Bracing = f.Bracing.SelectMany(p => new[] { p.a, p.b }).ToList(), Normal = XYZ(f.Normal), Area = f.Area, IsRoad = f.IsRoad,
+                });
+            }
+            return data;
+        }
+
+        public static BridgeDesign FromData(BridgeSettings settings, BridgeDesignData data)
+        {
+            Vector3 Tap(int i) => new Vector3(data.Taps[i * 3], data.Taps[i * 3 + 1], data.Taps[i * 3 + 2]);
+            var d = new BridgeDesign(settings) { GroundY = data.GroundY, StartSurface = data.StartSurface };
+            Vector3 mid0 = (Tap(0) + Tap(1)) * 0.5f, mid1 = (Tap(2) + Tap(3)) * 0.5f;
+            d.Frame = new BridgeFrame(mid0, mid1 - mid0, Vector3.UnitY);
+            d.SetupSurface(0, Tap(0), Tap(1), mid1, false);
+            d.SetupSurface(1, Tap(2), Tap(3), mid0, false);
+
+            foreach (var n in data.Nodes)
+            {
+                d.AddNode(new Node { Id = n.Id, Position = V(n.Position), Kind = n.Kind, Surface = n.Surface, OwnerLine = n.OwnerLine });
+                if (n.Kind == NodeKind.SurfaceAnchor)
+                    d.Surfaces[n.Surface].Anchors.Add(n.Id);
+                else if (n.Kind == NodeKind.GroundAnchor)
+                    d.GroundAnchors.Add(n.Id);
+            }
+            foreach (var l in data.Lines)
+                d.AddLine(new Line { Id = l.Id, Shape = l.Shape, Nodes = new List<int>(l.Nodes), Section = l.Section });
+            foreach (var f in data.Fills)
+            {
+                var fill = new Fill { Id = f.Id, Normal = V(f.Normal), Area = f.Area, IsRoad = f.IsRoad };
+                fill.Corners.AddRange(f.Corners);
+                fill.Boundary.AddRange(f.Boundary);
+                fill.Triangles.AddRange(f.Triangles);
+                for (int i = 0; i + 1 < f.Bracing.Count; i += 2)
+                    fill.Bracing.Add((f.Bracing[i], f.Bracing[i + 1]));
+                d.AddFill(fill);
+            }
+            d._nextId = data.NextId;
+            return d;
+        }
+
+        static float[] XYZ(Vector3 v) => new[] { v.X, v.Y, v.Z };
+        static Vector3 V(float[] a) => new Vector3(a[0], a[1], a[2]);
+
+        void SetupSurface(int index, Vector3 a, Vector3 b, Vector3 otherMid, bool createAnchors)
         {
             var s = Surfaces[index];
             s.EdgeA = a;
@@ -123,6 +185,8 @@ namespace BridgeBuilder.Core
             if (Vector3.Dot(back, toOther) > 0f)
                 back = -back;
             s.Back = back;
+            if (!createAnchors)
+                return;
 
             int segments = Math.Max(1, (int)MathF.Round(s.EdgeLength / Settings.SnapSpacing));
             for (int i = 0; i <= segments; i++)

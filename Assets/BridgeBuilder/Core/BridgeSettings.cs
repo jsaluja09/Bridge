@@ -10,7 +10,7 @@ namespace BridgeBuilder.Core
     [Serializable]
     public class BridgeSettings
     {
-        [Header("Drawing (room units)")]
+        // Drawing (room units)
         public float SnapSpacing = 0.1f;          // target element length along a line (spec 2.3)
         public float NodeSnapRadius = 0.04f;
         public float MinLineLength = 0.05f;
@@ -25,17 +25,17 @@ namespace BridgeBuilder.Core
         public float SurfaceDepth = 1f;           // how far back from a marked edge the surface extends
         public float MaxRoadSlopeDeg = 20f;
 
-        [Header("Budget (room units)")]
+        // Budget (room units)
         public int NodeCap = 150;                 // hidden; enforced as "over budget"
         public float CostPerMeter = 50f;
         public float CostPerSquareMeter = 400f;
 
-        [Header("World")]
+        // World
         public float Scale = 20f;                 // 1 m in the room = 20 m of bridge
         public float Gravity = 9.81f;
         public bool PinnedSupports;               // false = fixed (spec 2.5)
 
-        [Header("Material and section (bridge world, SI): aluminum tube, calibrated by the fixtures")]
+        // Material and section (bridge world, SI): aluminum tube, calibrated by the fixtures
         public float YoungsModulus = 70e9f;
         public float ShearModulus = 26e9f;
         public float YieldStrength = 240e6f;
@@ -47,18 +47,18 @@ namespace BridgeBuilder.Core
         public float FillDragCoefficient = 1.2f;
         public float AirDensity = 1.225f;
 
-        [Header("Dynamics")]
+        // Dynamics
         public float FixedDt = 1f / 60f;
         public float RayleighAlpha = 0.2f;        // mass-proportional damping
         public float RayleighBeta = 0.002f;       // stiffness-proportional damping
         public int MaxFailuresPerStep = 3;
         public float Timeout = 30f;
 
-        [Header("Debris")]
+        // Debris
         public int DebrisSubsteps = 10;
         public float DebrisFriction = 0.6f;
 
-        [Header("Car (bridge world)")]
+        // Car (bridge world)
         public float CarSpeed = 8f;
         public float CarLength = 4.5f;
         public float Wheelbase = 2.7f;
@@ -71,7 +71,7 @@ namespace BridgeBuilder.Core
         public float CarDragCoefficient = 1f;
         public int CarSubsteps = 8;
 
-        [Header("Feedback")]
+        // Feedback
         public float PulseThreshold = 0.9f;
         public float PreviewDelay = 0.3f;
 
@@ -97,12 +97,5 @@ namespace BridgeBuilder.Core
             new Challenge { Name = "Crosswind", Description = "15 m/s wind from the side.", WindSpeed = 15f, Budget = 700f },
             new Challenge { Name = "Icy and windy", Description = "Low grip and a 10 m/s crosswind.", WindSpeed = 10f, Grip = 0.3f, Budget = 700f },
         };
-    }
-
-    /// <summary>Lets Core use [Header] without referencing Unity; Unity ignores it, the Inspector uses the field names.</summary>
-    [AttributeUsage(AttributeTargets.Field)]
-    sealed class HeaderAttribute : Attribute
-    {
-        public HeaderAttribute(string header) { }
     }
 }

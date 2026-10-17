@@ -1,63 +1,56 @@
-# BridgeBuilder MR: setup (hackathon build)
+# BridgeBuilder MR: setup and controls
 
 ## Quick start: just build and run
 
-`SampleScene` works as-is. On start, `BridgeBootstrap` hides the template's demo objects and adds the game
-(a placeholder box car, no sounds). Use **File → Build And Run** with the Quest connected over USB.
-
-## Proper scene (optional, about 10 minutes)
-
-Do this to add a real car model, sounds or materials. Once a Bridge Game component is in the scene,
-the bootstrap steps aside.
-
-1. Open `Assets/Scenes/SampleScene` and save a copy as `Assets/Scenes/Bridge` so the template stays intact.
-2. Turn off the template's demo objects in the Hierarchy (untick each one):
-   `Coaching UI`, `Tutorial Player`, `Hand Menu Setup MR Template Variant`, `Tooltip Worldspace`,
-   `Spatial Panel Manipulator`, and the `UI` object (spawner dropdown and toggles).
-   Inside `MR Interaction Setup`, find `Object Spawner` (search the Hierarchy for it) and turn it off,
-   so the trigger doesn't spawn template objects.
-   Keep `MR Interaction Setup`, `Permissions Manager`, `Directional Light` and `Lighting`.
-3. Create an empty GameObject named `BridgeGame` at the origin and add the **Bridge Game** component.
-   It adds `Controller Pointer`, `Bridge View` and `Car View` automatically.
-4. Optional but nice:
-   - **Bridge View → Member Material**: any URP Lit material (e.g. `MRTemplateAssets/Materials/Primitive/Interactables.mat`).
-     Leave empty and one is made at runtime.
-   - **Bridge Game → Snap Clip / Error Clip / Pass Clip**: `MRTemplateAssets/Audio/ButtonClick.wav`, `ButtonHover.wav`, `Goal.wav`.
-5. Car model: download Kenney's **Car Kit** (https://kenney.nl/assets/car-kit, CC0 license, free for any use).
-   Import one car `.fbx`, drag it into **Car View → Car Prefab**. It's scaled to `Car Length` automatically.
-   If it drives sideways or backwards, set **Yaw Offset** to 90, -90 or 180.
-   Record the asset and its license in the team's asset list (spec §1).
-6. Add the scene to **File → Build Profiles → Scene List** and untick `SampleScene`.
-
-## Controls (right controller unless noted)
-
-| Button | Does |
-|---|---|
-| Trigger | Mark a surface edge / hold to draw a line from a dot, release to place it |
-| A | Run the test / go back to building |
-| B | Undo the last line |
-| X (left) | Clear all lines; press again with no lines to re-mark the surfaces |
-
-Keyboard over Link: Space = A, Backspace = B, R = X.
+`SampleScene` works as-is. On start, `BridgeBootstrap` hides the template's demo objects and adds the game,
+and passthrough is forced on. Plug in the Quest, then **File → Build And Run** (Meta Quest or Android profile;
+minimum API level 32 is set automatically for Quest 2).
 
 ## How a round works
 
-1. Touch the edge of the start surface where the gap begins, pull the trigger. Then the far surface.
-   The car starts on the first surface.
-2. Draw on the vertical plane between the two taps (a thin line shows where your controller projects onto it).
-   Lines must start on a dot. Ends snap to a dot or to a 5 cm grid.
-3. Your side is mirrored across the road width, with automatic cross-bracing. Flat lines (up to 20°) become road.
-4. A: gravity ramps in for 1 s, then the car drives across. Members go green → yellow → red with load and break past 100%.
+1. **Brief.** Pick a challenge with the right stick (car weight, wind, grip, budget). A to start.
+2. **Mark the surfaces: four taps.** Touch both ends of the start surface's edge that faces the gap, then both
+   ends of the far surface's edge. Snap dots (fixed supports) appear along each edge, and ground dots appear
+   on the floor under the gap for piers.
+3. **Build.** Lines must start on a dot. Draw freehand: straight lines, arcs, and zigzags are recognized and
+   cut into ~10 cm pieces. Every piece ends in a new dot you can build from.
+4. **Deck.** Use the **Fill** tool to tap the corners of a flat shape (e.g. the two bottom chords and the
+   surface edges), then the **Road** tool to flag it as road. The car only drives on road fills.
+5. **Test.** A. The bridge settles under its own weight, then the car drives across. Members go green → yellow
+   → red with load (stripes get denser too), pulse above 90%, and break past 100%. Pieces that come loose
+   fall onto the floor and tables.
+
+While you build, the bridge is colored by the load from its own weight (a dead-load preview); magenta
+means a piece isn't connected to any support.
+
+## Controls
+
+| Button | Does |
+|---|---|
+| Right trigger | Use the current tool |
+| Right stick left/right | Change tool: Draw, Fill, Road, Delete |
+| Right stick click | Symmetry: mirror every line across the road's centerline |
+| A | Test / back to building (brief: start) |
+| B | Undo (Fill tool: remove the last corner) |
+| X (left) | Clear the bridge (press twice); with nothing built, back to the brief |
+| Y (left) | Swap which surface the car starts from |
+
+Keyboard over Link: Space = A, Backspace = B, R = X, Y = Y, M = stick click, arrows = tool.
+
+## Optional polish (Bridge Game component)
+
+- **Car View → Car Prefab:** a free car model, e.g. Kenney's Car Kit (https://kenney.nl/assets/car-kit,
+  CC0). Record each asset and its license in the team's asset list (spec §1). Set **Yaw Offset** if it drives
+  sideways.
+- **Sounds:** `MRTemplateAssets/Audio/ButtonClick.wav` (snap), `ButtonHover.wav` (error), `Goal.wav` (pass).
+  A creak loop (e.g. a CC0 clip from freesound.org) on **Creak Clip** rises in pitch as members near failure.
+- **Controller Pointer → Tip Offset** if the cursor dot isn't at the controller's tip.
 
 ## Tuning
 
-Everything is on **Bridge Game → Settings** and can be changed during Play mode (it applies on the next test).
+Everything is on **Bridge Game → Settings**. Material and section were calibrated by the tests so a bare deck
+fails under the standard car and a simple truss holds it; after changing them, run
+**Window → General → Test Runner → EditMode → Run All**.
 
-- Bridges too strong: lower `Tension Limit`, `Compression Limit` or `Bending Limit`, or raise `Car Mass`.
-- Long struts not buckling enough: lower `Buckling Coefficient` (capacity = coefficient / length²).
-- Long road spans holding: lower `Bending Limit`.
-- Bridge too wobbly: raise `Substeps` or `Iterations` (costs CPU).
-- Cursor not at the controller tip: **Controller Pointer → Tip Offset**.
-
-After changing defaults in `BridgeSettings.cs`, run the tests: **Window → General → Test Runner → EditMode → Run All**.
-They check that bare spans and long planks fail and that a king-post truss and a Pratt truss hold.
+The grey line at the bottom of the panel is the live solver benchmark (spec §2.12): equations, matrix band,
+milliseconds per step, and the time to start a test. Use it to set **Node Cap** on the headset.

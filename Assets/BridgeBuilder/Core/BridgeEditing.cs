@@ -24,6 +24,9 @@ namespace BridgeBuilder.Core
             _edits.Add(edit);
         }
 
+        /// <summary>Records an edit that was already applied (e.g. a line plus its mirror).</summary>
+        public void Push(IEdit edit) => _edits.Add(edit);
+
         public bool Undo(BridgeDesign d)
         {
             if (_edits.Count == 0)

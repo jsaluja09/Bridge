@@ -1,74 +1,63 @@
+using System.Collections.Generic;
 using BridgeBuilder.Core;
-using TMPro;
 using UnityEngine;
-using NVector2 = System.Numerics.Vector2;
 
 namespace BridgeBuilder.Game
 {
     /// <summary>
-    /// The game loop: mark two surfaces, draw one side of the bridge on the vertical plane between them
-    /// (it is mirrored to a full 3D bridge), then press A to send the car across.
+    /// The game loop (spec section 6): pick a challenge, mark two surfaces with four taps, build with the
+    /// Draw / Fill / Road / Delete tools, then send the car across. The simulation runs on a worker thread;
+    /// this class turns input into design edits and draws whatever state is current.
+    /// Split across partial files: flow (here), tools, drawing, and HUD/audio.
     /// </summary>
     [RequireComponent(typeof(ControllerPointer), typeof(BridgeView), typeof(CarView))]
-    public sealed class BridgeGame : MonoBehaviour
+    public sealed partial class BridgeGame : MonoBehaviour
     {
         [SerializeField] BridgeSettings settings = new BridgeSettings();
+        [SerializeField] Challenge[] challenges = Challenge.Defaults();
         [Tooltip("Show the real room behind the game (Quest passthrough).")]
         [SerializeField] bool passthrough = true;
 
-        [Header("Feedback")]
-        [SerializeField] AudioClip snapClip;
-        [SerializeField] AudioClip errorClip;
-        [SerializeField] AudioClip breakClip;
-        [SerializeField] AudioClip passClip;
-        [SerializeField] AudioClip failClip;
-        [SerializeField] float statusFontSize = 0.25f;
-        [Tooltip("Seconds the collapse keeps animating after the result.")]
-        [SerializeField] float afterResultTime = 6f;
-
-        [Header("Look")]
-        [SerializeField] float memberRadius = 0.006f;
-        [SerializeField] float lateralRadius = 0.002f;
-        [SerializeField] float nodeRadius = 0.009f;
-        [SerializeField] Color drawnColor = new Color(0.85f, 0.9f, 1f);
-        [SerializeField] Color anchorColor = new Color(1f, 0.55f, 0.1f);
-        [SerializeField] Color lateralColor = new Color(0.55f, 0.55f, 0.6f);
-
-        enum Phase { MarkStart, MarkFar, Build, Testing }
+        enum Phase { Brief, MarkSurfaces, Build, Testing }
 
         ControllerPointer _pointer;
         BridgeView _view;
         CarView _car;
-        AudioSource _audio;
-        TextMeshPro _status;
+        SimWorker _worker;
 
         Phase _phase;
-        Vector3 _startTap;
-        BridgeFrame _frame;
+        int _challengeIndex;
+        readonly List<Vector3> _taps = new List<Vector3>();
+
         BridgeDesign _design;
-        int _drawStart = -1;
+        readonly UndoStack _undo = new UndoStack();
+        BridgeStructure _structure;        // the design compiled, refreshed on every edit
+        Vector3[] _restRoom = new Vector3[0];
+        PreviewResult _preview;
+        int _previewRequested = -1;
+        float _editTime;
+        RoadReport _roads;
+        CarSim _parkedCar;
+        float _roadWarningUntil;
 
-        BridgeTestRun _run;
-        float _accumulator;
-        float _resultTime;
+        BridgeStructure _runStructure;
+        Snapshot _snapshot;
+        int _lastBroken;
         RunResult _shownResult;
+        int _stars;
+        float _budgetFraction;
 
-        string _flash;
-        float _flashUntil;
+        Challenge Challenge => challenges[_challengeIndex];
 
         void Awake()
         {
             _pointer = GetComponent<ControllerPointer>();
             _view = GetComponent<BridgeView>();
             _car = GetComponent<CarView>();
-            _audio = gameObject.AddComponent<AudioSource>();
-            _audio.playOnAwake = false;
-
-            var text = new GameObject("Status");
-            text.transform.SetParent(transform, false);
-            _status = text.AddComponent<TextMeshPro>();
-            _status.alignment = TextAlignmentOptions.Center;
-            _status.rectTransform.sizeDelta = new Vector2(2f, 0.5f);
+            if (challenges == null || challenges.Length == 0)
+                challenges = Challenge.Defaults();
+            CreateFeedback();
+            _worker = new SimWorker();
         }
 
         void Start()
@@ -77,308 +66,177 @@ namespace BridgeBuilder.Game
                 Passthrough.Enable();
         }
 
+        void OnDestroy() => _worker?.Dispose();
+
         void Update()
         {
             switch (_phase)
             {
-                case Phase.MarkStart: UpdateMarkStart(); break;
-                case Phase.MarkFar: UpdateMarkFar(); break;
+                case Phase.Brief: UpdateBrief(); break;
+                case Phase.MarkSurfaces: UpdateMarking(); break;
                 case Phase.Build: UpdateBuild(); break;
                 case Phase.Testing: UpdateTesting(); break;
             }
             Draw();
-            UpdateStatus();
+            UpdateHud();
+            UpdateAudio();
         }
 
-        // ---------- Phases ----------
+        // ---------- Brief: choose a challenge (spec 2.9) ----------
 
-        void UpdateMarkStart()
+        void UpdateBrief()
         {
-            if (_pointer.TriggerPressed)
+            if (_pointer.ToolStep != 0)
             {
-                _startTap = _pointer.Tip;
-                _phase = Phase.MarkFar;
+                _challengeIndex = (_challengeIndex + _pointer.ToolStep + challenges.Length) % challenges.Length;
+                Play(snapClip);
+            }
+            if (_pointer.PrimaryPressed || _pointer.TriggerPressed)
+            {
+                _taps.Clear();
+                _phase = Phase.MarkSurfaces;
                 Play(snapClip);
             }
         }
 
-        void UpdateMarkFar()
+        // ---------- Four taps: both ends of each surface's edge (spec 2.2) ----------
+
+        void UpdateMarking()
         {
-            if (_pointer.ResetPressed)
+            if (_pointer.ClearPressed)
             {
-                _phase = Phase.MarkStart;
+                if (_taps.Count > 0)
+                    _taps.RemoveAt(_taps.Count - 1);
+                else
+                    _phase = Phase.Brief;
                 return;
             }
             if (!_pointer.TriggerPressed)
                 return;
 
-            Vector3 far = _pointer.Tip;
-            Vector3 gap = Vector3.ProjectOnPlane(far - _startTap, Vector3.up);
-            if (gap.magnitude < 0.2f)
+            _taps.Add(_pointer.Tip);
+            Play(snapClip);
+
+            if ((_taps.Count == 2 || _taps.Count == 4) && Vector3.Distance(_taps[_taps.Count - 1], _taps[_taps.Count - 2]) < 0.08f)
             {
-                Flash("Too close. Pick a surface at least 20 cm away.");
+                Flash("Touch both ends of the edge, at least 8 cm apart");
                 Play(errorClip);
+                _taps.RemoveAt(_taps.Count - 1);
+                return;
+            }
+            if (_taps.Count < 4)
+                return;
+
+            Vector3 gap = (_taps[2] + _taps[3] - _taps[0] - _taps[1]) * 0.5f;
+            gap.y = 0f;
+            if (gap.magnitude < 0.25f)
+            {
+                Flash("The surfaces need to be at least 25 cm apart");
+                Play(errorClip);
+                _taps.RemoveRange(2, 2);
                 return;
             }
 
-            Vector3 viewer = Camera.main != null ? Camera.main.transform.position : _startTap - gap.normalized;
-            _frame = BridgeFrame.FromTaps(_startTap.ToNumerics(), far.ToNumerics(), Vector3.up.ToNumerics(),
-                                          viewer.ToNumerics(), settings.RoadWidth);
-            NVector2 farPlane = _frame.ToPlane(far.ToNumerics());
-            _design = new BridgeDesign(settings, farPlane.X, farPlane.Y);
+            float lowestTap = Mathf.Min(Mathf.Min(_taps[0].y, _taps[1].y), Mathf.Min(_taps[2].y, _taps[3].y));
+            float floor = Mathf.Min(_pointer.FloorY, lowestTap - 0.3f);
+            _design = BridgeDesign.Create(settings, _taps[0].ToNumerics(), _taps[1].ToNumerics(), _taps[2].ToNumerics(), _taps[3].ToNumerics(), floor);
+            _undo.Clear();
+            _structure = null;
+            _preview = null;
             _phase = Phase.Build;
-            Play(snapClip);
         }
+
+        // ---------- Build ----------
 
         void UpdateBuild()
         {
-            NVector2 p = _frame.ToPlane(_pointer.Tip.ToNumerics());
+            RefreshStructure();
+            UpdateTools();
 
-            if (_pointer.TriggerPressed)
-            {
-                _drawStart = _design.FindNode(p, settings.NodeSnapRadius * 1.5f);
-                if (_drawStart < 0)
-                {
-                    Flash("Start each line on a dot");
-                    Play(errorClip);
-                }
-            }
-            else if (_pointer.TriggerReleased && _drawStart >= 0)
-            {
-                var result = _design.TryAddLine(_drawStart, p);
-                _drawStart = -1;
-                switch (result)
-                {
-                    case AddLineResult.Added: Play(snapClip); break;
-                    case AddLineResult.TooMany: Flash("Out of material"); Play(errorClip); break;
-                    case AddLineResult.Duplicate: Flash("That line already exists"); Play(errorClip); break;
-                }
-            }
-
-            if (_pointer.SecondaryPressed && _design.Undo())
-                Play(snapClip);
-
-            if (_pointer.ResetPressed)
-            {
-                if (_design.LineCount > 0)
-                    _design.Clear();
-                else
-                    _phase = Phase.MarkStart;
-                _drawStart = -1;
-            }
-
-            if (_pointer.PrimaryPressed)
+            if (_pointer.PrimaryPressed && !Drawing)
                 StartTest();
         }
 
+        /// <summary>Recompiles after edits, and runs the dead-load preview once the player pauses (spec 2.10).</summary>
+        void RefreshStructure()
+        {
+            if (_structure == null || _structure.DesignVersion != _design.Version)
+            {
+                _structure = BridgeStructure.Compile(_design, Challenge);
+                if (_restRoom.Length < _structure.NodeCount)
+                    _restRoom = new Vector3[_structure.NodeCount * 2];
+                for (int i = 0; i < _structure.NodeCount; i++)
+                    _restRoom[i] = _structure.ToRoom(_structure.Rest[i]).ToUnity();
+                _roads = BridgeEditing.ValidateRoads(_design);
+                _parkedCar = new CarSim(_structure);
+                _editTime = Time.time;
+            }
+
+            var preview = _worker.TakePreview();
+            if (preview != null)
+                _preview = preview;
+
+            if (_previewRequested != _design.Version && !Drawing && Time.time - _editTime >= settings.PreviewDelay)
+            {
+                _worker.RequestPreview(_structure);
+                _previewRequested = _design.Version;
+            }
+        }
+
+        bool PreviewCurrent => _preview != null && _structure != null && _preview.Structure == _structure;
+
         void StartTest()
         {
-            _drawStart = -1;
-            _run = new BridgeTestRun(_design, _frame, settings);
-            _accumulator = 0f;
-            _resultTime = 0f;
+            _roads = BridgeEditing.ValidateRoads(_design);
+            if (!_roads.Ok)
+            {
+                Flash(_roads.Message);
+                Play(errorClip);
+                _roadWarningUntil = Time.time + 3f;
+                return;
+            }
+
+            ResetToolState();
+            _runStructure = BridgeStructure.Compile(_design, Challenge);
+            _worker.StartRun(_runStructure);
+            _snapshot = null;
+            _lastBroken = 0;
             _shownResult = RunResult.Running;
+            _stars = 0;
+            _budgetFraction = Challenge.Budget > 0f ? _design.Cost / Challenge.Budget : 0f;
             _phase = Phase.Testing;
         }
 
+        // ---------- Testing ----------
+
         void UpdateTesting()
         {
-            if (_pointer.PrimaryPressed || _pointer.ResetPressed)
-            {
-                _run = null;
-                _car.Hide();
-                _phase = Phase.Build;
-                return;
-            }
+            var latest = _worker.Latest();
+            _snapshot = latest.Structure == _runStructure ? latest : null;
 
-            bool animating = _run.Result == RunResult.Running || _resultTime < afterResultTime;
-            if (animating)
+            if (_snapshot != null)
             {
-                _accumulator += Mathf.Min(Time.deltaTime, 0.1f);
-                bool broke = false;
-                while (_accumulator >= settings.FixedDt)
+                if (_snapshot.BrokenCount > _lastBroken)
                 {
-                    _run.Step();
-                    broke |= _run.Solver.BrokenThisStep.Count > 0;
-                    _accumulator -= settings.FixedDt;
-                }
-                if (broke)
+                    _lastBroken = _snapshot.BrokenCount;
                     Play(breakClip);
-                if (_run.Result != RunResult.Running)
-                    _resultTime += Time.deltaTime;
+                }
+                if (_snapshot.Result != _shownResult)
+                {
+                    _shownResult = _snapshot.Result;
+                    _stars = BridgeTestRun.StarsFor(_snapshot.Result, _snapshot.BrokenCount, _snapshot.PeakUtilization, _budgetFraction);
+                    Play(_shownResult == RunResult.Passed ? passClip : failClip);
+                }
             }
 
-            if (_run.Result != _shownResult)
+            // Tests run on a copy: going back restores the bridge as built (spec 2.11).
+            if (_pointer.PrimaryPressed || _pointer.ClearPressed)
             {
-                _shownResult = _run.Result;
-                Play(_run.Result == RunResult.Passed ? passClip : failClip);
+                _worker.StopRun();
+                _car.Hide();
+                _snapshot = null;
+                _phase = Phase.Build;
             }
-
-            if (_run.Car.State == CarState.Falling)
-                _car.Fall();
-            else if (_run.Car.State != CarState.Arrived)
-                _car.Show(_run.Car.Position.ToUnity(), _run.Car.Forward.ToUnity());
-        }
-
-        // ---------- Drawing ----------
-
-        void Draw()
-        {
-            _view.Begin();
-            switch (_phase)
-            {
-                case Phase.MarkStart:
-                    _view.Dot(_pointer.Tip, nodeRadius, anchorColor);
-                    break;
-                case Phase.MarkFar:
-                    _view.Dot(_startTap, nodeRadius * 1.3f, anchorColor);
-                    _view.Dot(_pointer.Tip, nodeRadius, anchorColor);
-                    break;
-                case Phase.Build:
-                    DrawDesign();
-                    DrawCursor();
-                    break;
-                case Phase.Testing:
-                    DrawRun();
-                    break;
-            }
-            _view.End();
-        }
-
-        Vector3 World(int designNode, int side) => _frame.ToWorld(_design.Nodes[designNode].Position, side).ToUnity();
-
-        void DrawSurfaces()
-        {
-            for (int side = 0; side < 2; side++)
-            {
-                _view.Segment(World(0, side), World(1, side), memberRadius * 0.6f, anchorColor);
-                _view.Segment(World(2, side), World(3, side), memberRadius * 0.6f, anchorColor);
-            }
-        }
-
-        void DrawDesign()
-        {
-            DrawSurfaces();
-            for (int i = 0; i < _design.Members.Count; i++)
-            {
-                var m = _design.Members[i];
-                for (int side = 0; side < 2; side++)
-                    _view.Segment(World(m.A, side), World(m.B, side), memberRadius, side == 0 ? drawnColor : drawnColor * 0.7f);
-                if (_design.IsRoad(i))
-                    _view.RoadQuad(World(m.A, 0), World(m.B, 0), World(m.A, 1), World(m.B, 1));
-            }
-            for (int i = 0; i < _design.Nodes.Count; i++)
-                _view.Dot(World(i, 0), nodeRadius, _design.Nodes[i].Anchor ? anchorColor : drawnColor);
-        }
-
-        void DrawCursor()
-        {
-            NVector2 p = _frame.ToPlane(_pointer.Tip.ToNumerics());
-            Vector3 onPlane = _frame.ToWorld(p).ToUnity();
-            _view.Segment(_pointer.Tip, onPlane, lateralRadius * 0.5f, lateralColor);
-
-            if (_drawStart >= 0)
-            {
-                Vector3 end = _frame.ToWorld(_design.SnapEnd(p, out _)).ToUnity();
-                _view.Segment(World(_drawStart, 0), end, memberRadius, new Color(0.3f, 0.9f, 1f));
-                _view.Dot(end, nodeRadius * 1.2f, new Color(0.3f, 0.9f, 1f));
-            }
-            else
-            {
-                int hover = _design.FindNode(p, settings.NodeSnapRadius * 1.5f);
-                if (hover >= 0)
-                    _view.Dot(World(hover, 0), nodeRadius * 1.8f, new Color(0.3f, 0.9f, 1f));
-                else
-                    _view.Dot(onPlane, nodeRadius * 0.7f, lateralColor);
-            }
-        }
-
-        void DrawRun()
-        {
-            DrawSurfaces();
-            var solver = _run.Solver;
-            var pos = solver.Positions;
-            for (int m = 0; m < solver.MemberCount; m++)
-            {
-                if (!solver.Active[m])
-                    continue;
-                Vector3 a = pos[solver.MemberA[m]].ToUnity();
-                Vector3 b = pos[solver.MemberB[m]].ToUnity();
-                if (solver.Kind[m] == MemberKind.Lateral)
-                    _view.Segment(a, b, lateralRadius, lateralColor);
-                else
-                    _view.Segment(a, b, memberRadius, BridgeView.UtilizationColor(solver.Utilization[m]));
-            }
-
-            var st = _run.Structure;
-            foreach (int m in st.RoadMembers)
-            {
-                int twin = st.TwinMember(m);
-                if (!solver.Active[m] || !solver.Active[twin])
-                    continue;
-                _view.RoadQuad(pos[solver.MemberA[m]].ToUnity(), pos[solver.MemberB[m]].ToUnity(),
-                               pos[solver.MemberA[twin]].ToUnity(), pos[solver.MemberB[twin]].ToUnity());
-            }
-
-            for (int i = 0; i < st.DesignNodeCount; i++)
-            {
-                if (solver.IsFixed(i))
-                    _view.Dot(pos[i].ToUnity(), nodeRadius, anchorColor);
-            }
-        }
-
-        // ---------- Status text and sound ----------
-
-        void UpdateStatus()
-        {
-            string text;
-            switch (_phase)
-            {
-                case Phase.MarkStart:
-                    text = "Touch the edge of the START surface\nand pull the trigger";
-                    break;
-                case Phase.MarkFar:
-                    text = "Now touch the edge of the FAR surface";
-                    break;
-                case Phase.Build:
-                    text = $"Draw from a dot  ({_design.Members.Count}/{settings.MaxDrawnMembers} lines)\n" +
-                           "A: test   B: undo   X: clear";
-                    break;
-                default:
-                    text = _run.Result == RunResult.Running
-                        ? "Testing..."
-                        : $"{(_run.Result == RunResult.Passed ? "PASS" : "FAIL")}: {_run.Message}\n" +
-                          $"Members broken: {_run.Solver.BrokenCount}   Peak load: {Mathf.RoundToInt(_run.Solver.PeakUtilization * 100f)}%\n" +
-                          "A: back to building";
-                    break;
-            }
-            if (Time.time < _flashUntil)
-                text = _flash + "\n" + text;
-            _status.text = text;
-            _status.fontSize = statusFontSize;
-
-            var cam = Camera.main;
-            if (cam == null)
-                return;
-            Vector3 anchor = _phase == Phase.MarkStart
-                ? cam.transform.position + Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up).normalized * 0.7f
-                : _phase == Phase.MarkFar
-                    ? _startTap + Vector3.up * 0.25f
-                    : (_frame.Origin.ToUnity() + _frame.ToWorld(new NVector2(_design.FarU, _design.FarV)).ToUnity()) * 0.5f + Vector3.up * 0.4f;
-            _status.transform.position = anchor;
-            _status.transform.rotation = Quaternion.LookRotation(anchor - cam.transform.position, Vector3.up);
-        }
-
-        void Flash(string message)
-        {
-            _flash = message;
-            _flashUntil = Time.time + 1.5f;
-        }
-
-        void Play(AudioClip clip)
-        {
-            if (clip != null)
-                _audio.PlayOneShot(clip);
         }
     }
 }

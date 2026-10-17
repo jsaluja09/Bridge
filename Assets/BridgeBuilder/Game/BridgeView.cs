@@ -1,29 +1,30 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace BridgeBuilder.Game
 {
     /// <summary>
-    /// Immediate-mode drawing for the bridge: call Begin, add segments, dots and road quads, then End.
-    /// Backed by pooled primitives and one dynamic road mesh, so nothing is allocated per frame once warm.
+    /// Immediate-mode bridge drawing into one dynamic, vertex-colored mesh: one draw call for every member,
+    /// joint and fill. Call Begin, add shapes, then End. Lists are reused, so a warm frame allocates nothing.
     /// </summary>
     public sealed class BridgeView : MonoBehaviour
     {
-        [Tooltip("Any URP Lit material. Created at runtime if empty.")]
-        [SerializeField] Material memberMaterial;
-        [SerializeField] Material roadMaterial;
-        [SerializeField] Color roadColor = new Color(0.25f, 0.25f, 0.28f);
+        [Tooltip("Optional. Defaults to the BridgeBuilder/VertexColor shader.")]
+        [SerializeField] Material material;
+        [Tooltip("The non-color utilization cue: stripes that grow denser with load.")]
+        [Range(0f, 1f)] [SerializeField] float stripeAmount = 0.35f;
 
-        static readonly int BaseColor = Shader.PropertyToID("_BaseColor");
-        static readonly int LegacyColor = Shader.PropertyToID("_Color");
+        const int Sides = 6;
+        static readonly int StripeId = Shader.PropertyToID("_StripeAmount");
 
-        readonly Pool _segments = new Pool(PrimitiveType.Cylinder);
-        readonly Pool _dots = new Pool(PrimitiveType.Sphere);
-        MaterialPropertyBlock _block;
-
-        Mesh _roadMesh;
-        readonly List<Vector3> _roadVerts = new List<Vector3>();
-        readonly List<int> _roadTris = new List<int>();
+        Mesh _mesh;
+        readonly List<Vector3> _vertices = new List<Vector3>(16384);
+        readonly List<Vector3> _normals = new List<Vector3>(16384);
+        readonly List<Color32> _colors = new List<Color32>(16384);
+        readonly List<Vector2> _uvs = new List<Vector2>(16384);
+        readonly List<int> _indices = new List<int>(49152);
+        readonly Vector3[] _ring = new Vector3[Sides];
 
         public static Color UtilizationColor(float u)
         {
@@ -35,141 +36,141 @@ namespace BridgeBuilder.Game
 
         void Awake()
         {
-            _block = new MaterialPropertyBlock();
-            if (memberMaterial == null)
-                memberMaterial = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-            if (roadMaterial == null)
+            if (material == null)
             {
-                roadMaterial = new Material(memberMaterial);
-                roadMaterial.SetColor(BaseColor, roadColor);
+                var shader = Shader.Find("BridgeBuilder/VertexColor");
+                material = shader != null ? new Material(shader) : new Material(Shader.Find("Universal Render Pipeline/Lit"));
             }
 
-            _segments.Init(transform, memberMaterial);
-            _dots.Init(transform, memberMaterial);
-
-            _roadMesh = new Mesh { name = "Road" };
-            _roadMesh.MarkDynamic();
-            var road = new GameObject("Road");
-            road.transform.SetParent(transform, false);
-            road.AddComponent<MeshFilter>().sharedMesh = _roadMesh;
-            road.AddComponent<MeshRenderer>().sharedMaterial = roadMaterial;
+            _mesh = new Mesh { name = "Bridge", indexFormat = IndexFormat.UInt32 };
+            _mesh.MarkDynamic();
+            var go = new GameObject("Bridge Mesh");
+            go.transform.SetParent(transform, false);
+            go.AddComponent<MeshFilter>().sharedMesh = _mesh;
+            var r = go.AddComponent<MeshRenderer>();
+            r.sharedMaterial = material;
+            r.shadowCastingMode = ShadowCastingMode.Off;
         }
 
         public void Begin()
         {
-            _segments.Begin();
-            _dots.Begin();
-            _roadVerts.Clear();
-            _roadTris.Clear();
+            _vertices.Clear();
+            _normals.Clear();
+            _colors.Clear();
+            _uvs.Clear();
+            _indices.Clear();
         }
 
-        public void Segment(Vector3 a, Vector3 b, float radius, Color color)
+        /// <summary>A six-sided tube from a to b. utilization > 0 turns on the stripe cue for it.</summary>
+        public void Tube(Vector3 a, Vector3 b, float radius, Color color, float utilization = 0f)
         {
-            Vector3 d = b - a;
-            float len = d.magnitude;
-            if (len < 1e-5f)
+            Vector3 axis = b - a;
+            float length = axis.magnitude;
+            if (length < 1e-5f)
                 return;
-            var t = _segments.Next(out var r);
-            t.SetPositionAndRotation((a + b) * 0.5f, Quaternion.FromToRotation(Vector3.up, d / len));
-            t.localScale = new Vector3(radius * 2f, len * 0.5f, radius * 2f);
-            Tint(r, color);
+            axis /= length;
+            Vector3 u = Vector3.Cross(axis, Mathf.Abs(axis.y) < 0.95f ? Vector3.up : Vector3.right).normalized;
+            Vector3 v = Vector3.Cross(axis, u);
+            for (int i = 0; i < Sides; i++)
+            {
+                float angle = i * Mathf.PI * 2f / Sides;
+                _ring[i] = u * Mathf.Cos(angle) + v * Mathf.Sin(angle);
+            }
+
+            int start = _vertices.Count;
+            Color32 c = color;
+            float stripe = utilization > 0f ? Mathf.Max(utilization, 0.002f) : 0f;
+            for (int i = 0; i < Sides; i++)
+            {
+                _vertices.Add(a + _ring[i] * radius);
+                _vertices.Add(b + _ring[i] * radius);
+                _normals.Add(_ring[i]);
+                _normals.Add(_ring[i]);
+                _colors.Add(c);
+                _colors.Add(c);
+                _uvs.Add(new Vector2(0f, stripe));
+                _uvs.Add(new Vector2(length, stripe));
+            }
+            for (int i = 0; i < Sides; i++)
+            {
+                int i0 = start + i * 2, i1 = start + ((i + 1) % Sides) * 2;
+                Quad(i0, i0 + 1, i1 + 1, i1);
+            }
         }
 
+        /// <summary>A small octahedron, for joints, snap dots and cursors.</summary>
         public void Dot(Vector3 p, float radius, Color color)
         {
-            var t = _dots.Next(out var r);
-            t.SetPositionAndRotation(p, Quaternion.identity);
-            t.localScale = Vector3.one * (radius * 2f);
-            Tint(r, color);
+            int start = _vertices.Count;
+            Color32 c = color;
+            Add(p, Vector3.up, radius, c);
+            Add(p, Vector3.down, radius, c);
+            Add(p, Vector3.left, radius, c);
+            Add(p, Vector3.right, radius, c);
+            Add(p, Vector3.forward, radius, c);
+            Add(p, Vector3.back, radius, c);
+            int top = start, bottom = start + 1;
+            int[] ring = { start + 2, start + 4, start + 3, start + 5 };
+            for (int i = 0; i < 4; i++)
+            {
+                int x = ring[i], y = ring[(i + 1) % 4];
+                Tri(top, x, y);
+                Tri(bottom, y, x);
+            }
         }
 
-        /// <summary>A double-sided quad: a0-b0 on the drawn side, a1-b1 on the twin.</summary>
-        public void RoadQuad(Vector3 a0, Vector3 b0, Vector3 a1, Vector3 b1)
+        void Add(Vector3 center, Vector3 direction, float radius, Color32 color)
         {
-            int i = _roadVerts.Count;
-            _roadVerts.Add(a0);
-            _roadVerts.Add(b0);
-            _roadVerts.Add(b1);
-            _roadVerts.Add(a1);
-            // Both windings, so the road shows from above and below.
-            Tri(i, i + 1, i + 2);
-            Tri(i, i + 2, i + 3);
-            Tri(i, i + 2, i + 1);
-            Tri(i, i + 3, i + 2);
+            _vertices.Add(center + direction * radius);
+            _normals.Add(direction);
+            _colors.Add(color);
+            _uvs.Add(Vector2.zero);
+        }
+
+        /// <summary>A flat triangle (fills). The shader draws both sides.</summary>
+        public void Triangle(Vector3 a, Vector3 b, Vector3 c, Color color)
+        {
+            Vector3 n = Vector3.Cross(b - a, c - a);
+            if (n.sqrMagnitude < 1e-12f)
+                return;
+            n.Normalize();
+            int start = _vertices.Count;
+            Color32 col = color;
+            _vertices.Add(a);
+            _vertices.Add(b);
+            _vertices.Add(c);
+            for (int i = 0; i < 3; i++)
+            {
+                _normals.Add(n);
+                _colors.Add(col);
+                _uvs.Add(Vector2.zero);
+            }
+            Tri(start, start + 1, start + 2);
+        }
+
+        void Quad(int a, int b, int c, int d)
+        {
+            Tri(a, b, c);
+            Tri(a, c, d);
         }
 
         void Tri(int a, int b, int c)
         {
-            _roadTris.Add(a);
-            _roadTris.Add(b);
-            _roadTris.Add(c);
+            _indices.Add(a);
+            _indices.Add(b);
+            _indices.Add(c);
         }
 
         public void End()
         {
-            _segments.End();
-            _dots.End();
-            _roadMesh.Clear();
-            _roadMesh.SetVertices(_roadVerts);
-            _roadMesh.SetTriangles(_roadTris, 0);
-            _roadMesh.RecalculateNormals();
-            _roadMesh.RecalculateBounds();
-        }
-
-        void Tint(Renderer r, Color c)
-        {
-            _block.SetColor(BaseColor, c);
-            _block.SetColor(LegacyColor, c);
-            r.SetPropertyBlock(_block);
-        }
-
-        sealed class Pool
-        {
-            readonly PrimitiveType _type;
-            readonly List<Transform> _items = new List<Transform>();
-            readonly List<Renderer> _renderers = new List<Renderer>();
-            Transform _parent;
-            Material _material;
-            int _used;
-
-            public Pool(PrimitiveType type) => _type = type;
-
-            public void Init(Transform parent, Material material)
-            {
-                _parent = parent;
-                _material = material;
-            }
-
-            public void Begin() => _used = 0;
-
-            public Transform Next(out Renderer renderer)
-            {
-                if (_used == _items.Count)
-                {
-                    var go = GameObject.CreatePrimitive(_type);
-                    Object.Destroy(go.GetComponent<Collider>());
-                    go.transform.SetParent(_parent, false);
-                    var r = go.GetComponent<Renderer>();
-                    r.sharedMaterial = _material;
-                    r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                    _items.Add(go.transform);
-                    _renderers.Add(r);
-                }
-                renderer = _renderers[_used];
-                var t = _items[_used++];
-                if (!t.gameObject.activeSelf)
-                    t.gameObject.SetActive(true);
-                return t;
-            }
-
-            public void End()
-            {
-                for (int i = _used; i < _items.Count; i++)
-                {
-                    if (_items[i].gameObject.activeSelf)
-                        _items[i].gameObject.SetActive(false);
-                }
-            }
+            _mesh.Clear();
+            _mesh.SetVertices(_vertices);
+            _mesh.SetNormals(_normals);
+            _mesh.SetColors(_colors);
+            _mesh.SetUVs(0, _uvs);
+            _mesh.SetTriangles(_indices, 0, false);
+            _mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 1000f);
+            material.SetFloat(StripeId, stripeAmount);
         }
     }
 }
