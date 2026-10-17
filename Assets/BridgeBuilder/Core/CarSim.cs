@@ -5,190 +5,266 @@ namespace BridgeBuilder.Core
 {
     public enum CarState
     {
-        Waiting,
         Driving,
         Arrived,
         Falling,
     }
 
     /// <summary>
-    /// The car as two axle loads moving along the road at constant speed (lagged coupling:
-    /// loads come from the deck's current shape, then the solver steps).
-    /// Each axle rests on a start surface, a far surface, or a road member and its twin.
+    /// A small suspension car (spec 2.8): four spring-damper wheels on the road fills and the surfaces,
+    /// cruise control limited by grip, crosswind, and lagged two-way coupling (wheel loads from the last
+    /// step load the bridge; the car then reads the deck's new shape). Bridge-world units.
     /// </summary>
     public sealed class CarSim
     {
-        readonly BridgeSettings _s;
         readonly BridgeStructure _st;
+        readonly BridgeSettings _s;
+        readonly float _mass;
+        readonly float _grip;
+        readonly float _k;
+        readonly float _c;
+        readonly Vector3 _wind;
 
-        public CarState State { get; private set; } = CarState.Waiting;
-        public float S { get; private set; }               // center position along the gap
-        public Vector3 Position { get; private set; }       // world, center of the road at axle height
-        public Vector3 Forward { get; private set; }        // world, rear axle to front axle
+        public CarState State { get; private set; } = CarState.Driving;
+        public Vector3 Position;         // body reference point at axle height
+        public Vector3 Velocity;
+        public float Pitch;              // nose up positive
+        public float Roll;               // +Side up positive
+        public readonly Vector3 Direction;
+        public readonly Vector3 Side;
+        public Vector3 Forward { get; private set; }
+        public Vector3 Up { get; private set; }
 
-        readonly float[] _axleHeight = new float[2];
-        readonly int[] _axleMember = new int[2];            // -1 = on a surface
-        readonly float[] _axleT = new float[2];
+        // Wheels: 0 front-left(+Side), 1 front-right, 2 rear-left, 3 rear-right.
+        readonly float[] _lx, _ly;
+        public readonly float[] WheelLoad = new float[4];
+        readonly float[] _compression = new float[4];
+        readonly Vector3[] _normal = new Vector3[4];
+        readonly float[] _ground = new float[4];
+        readonly int[] _fill = new int[4];          // fill index, -1 = a surface, -2 = nothing
+        readonly int[] _tri = new int[4];
+        readonly Vector3[] _bary = new Vector3[4];
+        float _airTime;
+        int _surfaceContacts;
 
-        public CarSim(BridgeSettings settings, BridgeStructure structure)
+        public CarSim(BridgeStructure st)
         {
-            _s = settings;
-            _st = structure;
-            S = -settings.CarStartBack;
-            for (int i = 0; i < 2; i++)
-                _axleMember[i] = -1;
+            _st = st;
+            _s = st.Settings;
+            _mass = st.Challenge.CarMass;
+            _grip = st.Challenge.Grip;
+            _k = _mass * _s.Gravity / (4f * _s.SpringSag);
+            _c = 2f * _s.SuspensionDamping * MathF.Sqrt(_k * _mass / 4f);
+
+            float q = 0.5f * _s.AirDensity * st.Challenge.WindSpeed * st.Challenge.WindSpeed;
+            Direction = st.GapDirection;
+            Side = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, Direction));
+            float area = _s.CarSideArea * MathF.Abs(Vector3.Dot(st.WindDirection, Side)) +
+                         _s.CarFrontArea * MathF.Abs(Vector3.Dot(st.WindDirection, Direction));
+            _wind = st.WindDirection * (q * _s.CarDragCoefficient * area);
+
+            float hw = _s.Wheelbase * 0.5f, ht = _s.Track * 0.5f;
+            _lx = new[] { hw, hw, -hw, -hw };
+            _ly = new[] { ht, -ht, ht, -ht };
+
+            var start = st.Surfaces[st.StartSurface];
+            Position = start.Mid + start.Back * (_s.CarLength * 0.5f + 1.5f);
+            Position.Y = start.Height + _s.RideHeight;
+            for (int i = 0; i < 4; i++)
+                _fill[i] = -2;
             UpdatePose();
         }
 
-        public void StartDriving()
+        Vector3 WheelAnchor(int i) =>
+            Position + Direction * _lx[i] + Side * _ly[i] +
+            Vector3.UnitY * (_lx[i] * MathF.Tan(Pitch) + _ly[i] * MathF.Tan(Roll));
+
+        public void Step(float dt, Vector3[] positions, bool[] elementActive)
         {
-            if (State == CarState.Waiting)
-                State = CarState.Driving;
-        }
+            int substeps = Math.Max(1, _s.CarSubsteps);
+            float h = dt / substeps;
+            for (int sub = 0; sub < substeps; sub++)
+                Substep(h, positions, elementActive);
 
-        float AxleS(int axle) => S + (axle == 0 ? -0.5f : 0.5f) * _s.Wheelbase;
-
-        /// <summary>Moves the car, finds what each axle rests on, and loads the solver.</summary>
-        public void PreStep(float dt)
-        {
-            if (State != CarState.Driving)
-                return;
-
-            S += _s.CarSpeed * dt;
-            for (int axle = 0; axle < 2; axle++)
-            {
-                if (!FindSupport(AxleS(axle), _axleHeight[axle], out int member, out float t, out float h))
-                {
-                    State = CarState.Falling;
-                    return;
-                }
-                _axleMember[axle] = member;
-                _axleT[axle] = t;
-                _axleHeight[axle] = h;
-            }
-
-            if (AxleS(0) >= _st.FarU + 0.02f)
-            {
-                State = CarState.Arrived;
-                return;
-            }
-
-            ApplyLoads();
-        }
-
-        /// <summary>Re-reads the deck height under each axle after the solver moved it.</summary>
-        public void PostStep()
-        {
             if (State == CarState.Driving)
             {
-                for (int axle = 0; axle < 2; axle++)
-                {
-                    int m = _axleMember[axle];
-                    if (m >= 0 && TryRoadHeight(m, AxleS(axle), out _, out float h))
-                        _axleHeight[axle] = h;
-                }
+                _airTime = _surfaceContacts == 0 && TotalLoad() <= 0f ? _airTime + dt : 0f;
+                float lowest = MathF.Min(_st.Surfaces[0].Height, _st.Surfaces[1].Height);
+                if (_airTime > 0.4f || Position.Y < lowest - 3f)
+                    State = CarState.Falling;
+                else if (ReachedFarSide())
+                    State = CarState.Arrived;
             }
             UpdatePose();
         }
 
-        void ApplyLoads()
+        float TotalLoad()
         {
-            var solver = _st.Solver;
-            float axleWeight = _s.CarMass * _s.Gravity * 0.5f;
-            float axleMass = _s.CarMass * 0.5f;
-            for (int axle = 0; axle < 2; axle++)
+            float sum = 0f;
+            for (int i = 0; i < 4; i++)
+                sum += WheelLoad[i];
+            return sum;
+        }
+
+        bool ReachedFarSide()
+        {
+            var far = _st.Surfaces[1 - _st.StartSurface];
+            float past = Vector3.Dot(Position - far.Mid, Direction);
+            return past >= _s.CarLength * 0.5f + 1f && _surfaceContacts >= 2 && Position.Y > far.Height;
+        }
+
+        void Substep(float h, Vector3[] positions, bool[] elementActive)
+        {
+            float normalSum = 0f;
+            Vector3 force = new Vector3(0f, -_mass * _s.Gravity, 0f) + _wind;
+            float front = 0f, rear = 0f, left = 0f, right = 0f;
+            int frontN = 0, rearN = 0, leftN = 0, rightN = 0;
+            _surfaceContacts = 0;
+            bool contacts = State != CarState.Falling;
+
+            for (int i = 0; i < 4; i++)
             {
-                int m = _axleMember[axle];
-                if (m < 0)
-                    continue;
-                float t = _axleT[axle];
-                for (int side = 0; side < 2; side++)
+                Vector3 anchor = WheelAnchor(i);
+                float c = 0f;
+                WheelLoad[i] = 0f;
+                if (contacts && FindGround(anchor, positions, elementActive, i))
                 {
-                    int member = side == 0 ? m : _st.TwinMember(m);
-                    int a = solver.MemberA[member], b = solver.MemberB[member];
-                    float wa = (1f - t) * 0.5f, wb = t * 0.5f;
-                    solver.AddLoad(a, new Vector3(0f, -axleWeight * wa, 0f), axleMass * wa);
-                    solver.AddLoad(b, new Vector3(0f, -axleWeight * wb, 0f), axleMass * wb);
-                    // Simply supported point load: M = P * t(1-t) * L.
-                    solver.AddBending(member, axleWeight * 0.5f * t * (1f - t) * solver.RestLength(member));
+                    c = _s.RideHeight + _s.SpringSag - (anchor.Y - _ground[i]);
+                    if (c > 0f)
+                    {
+                        float f = MathF.Max(0f, _k * c + _c * (c - _compression[i]) / h);
+                        WheelLoad[i] = f;
+                        normalSum += f;
+                        force += _normal[i] * f;
+                        if (_fill[i] == -1)
+                            _surfaceContacts++;
+                    }
+                    if (i < 2) { front += _ground[i]; frontN++; } else { rear += _ground[i]; rearN++; }
+                    if ((i & 1) == 0) { left += _ground[i]; leftN++; } else { right += _ground[i]; rightN++; }
+                }
+                else
+                {
+                    _fill[i] = -2;
+                }
+                _compression[i] = MathF.Max(0f, c);
+            }
+
+            if (State == CarState.Driving && normalSum > 0f)
+            {
+                float maxFriction = _grip * normalSum;
+                float vLong = Vector3.Dot(Velocity, Direction);
+                float drive = Math.Clamp(_mass * (_s.CarSpeed - vLong) * 2f, -maxFriction, maxFriction);
+                float vLat = Vector3.Dot(Velocity, Side);
+                float needed = -_mass * vLat / h - Vector3.Dot(force, Side);
+                float maxLat = MathF.Sqrt(MathF.Max(0f, maxFriction * maxFriction - drive * drive));
+                force += Direction * drive + Side * Math.Clamp(needed, -maxLat, maxLat);
+            }
+
+            Velocity += force / _mass * h;
+            Position += Velocity * h;
+
+            if (Position.Y < _st.GroundY + _s.RideHeight)
+            {
+                Position.Y = _st.GroundY + _s.RideHeight;
+                Velocity *= 0.5f;
+                Velocity.Y = 0f;
+            }
+
+            // Body attitude follows the ground under the wheels; tumble a little when falling.
+            float blend = MathF.Min(1f, h * 10f);
+            if (State == CarState.Falling)
+            {
+                Pitch -= 0.8f * h;
+                Roll += 0.5f * h;
+            }
+            else
+            {
+                if (frontN > 0 && rearN > 0)
+                    Pitch += (MathF.Atan((front / frontN - rear / rearN) / _s.Wheelbase) - Pitch) * blend;
+                if (leftN > 0 && rightN > 0)
+                    Roll += (MathF.Atan((left / leftN - right / rightN) / _s.Track) - Roll) * blend;
+            }
+        }
+
+        /// <summary>Highest drivable ground under the wheel that it could be resting on.</summary>
+        bool FindGround(Vector3 anchor, Vector3[] positions, bool[] elementActive, int wheel)
+        {
+            float best = float.MinValue;
+            float reach = anchor.Y + 0.3f;
+            for (int s = 0; s < 2; s++)
+            {
+                var surface = _st.Surfaces[s];
+                if (surface.Height <= reach && surface.Height > best && surface.Contains(anchor))
+                {
+                    best = surface.Height;
+                    _fill[wheel] = -1;
+                    _normal[wheel] = Vector3.UnitY;
                 }
             }
-        }
 
-        struct Support
-        {
-            public int Member;
-            public float T;
-            public float Height;
-            public float Error;
-        }
-
-        bool FindSupport(float s, float prevHeight, out int member, out float t, out float height)
-        {
-            var best = new Support { Member = -1, Error = float.MaxValue };
-
-            if (s <= 0f)
-                Consider(ref best, prevHeight, -1, 0f, 0f);
-            if (s >= _st.FarU)
-                Consider(ref best, prevHeight, -1, 0f, _st.FarV);
-            foreach (int m in _st.RoadMembers)
+            for (int f = 0; f < _st.Fills.Count; f++)
             {
-                if (TryRoadHeight(m, s, out float tt, out float h))
-                    Consider(ref best, prevHeight, m, tt, h);
+                var g = _st.Fills[f];
+                if (!g.IsRoad)
+                    continue;
+                for (int t = 0; t < g.Tris.Length; t += 3)
+                {
+                    if (!Usable(g, t, elementActive))
+                        continue;
+                    Vector3 a = positions[g.Tris[t]], b = positions[g.Tris[t + 1]], c = positions[g.Tris[t + 2]];
+                    if (!Geometry.BarycentricXZ(anchor, a, b, c, out float wa, out float wb, out float wc))
+                        continue;
+                    float height = wa * a.Y + wb * b.Y + wc * c.Y;
+                    if (height > reach || height <= best)
+                        continue;
+                    best = height;
+                    _fill[wheel] = f;
+                    _tri[wheel] = t;
+                    _bary[wheel] = new Vector3(wa, wb, wc);
+                    Vector3 n = Vector3.Normalize(Vector3.Cross(b - a, c - a));
+                    _normal[wheel] = n.Y < 0f ? -n : n;
+                }
             }
 
-            member = best.Member;
-            t = best.T;
-            height = best.Height;
-            return best.Error < float.MaxValue;
+            _ground[wheel] = best;
+            return best > float.MinValue;
         }
 
-        void Consider(ref Support best, float prevHeight, int member, float t, float height)
+        static bool Usable(FillGeometry g, int t, bool[] elementActive)
         {
-            float rise = height - prevHeight;
-            if (rise > _s.CarStepUp || -rise > _s.CarMaxDrop)
-                return;
-            float err = Math.Abs(rise);
-            if (err < best.Error)
-                best = new Support { Member = member, T = t, Height = height, Error = err };
-        }
-
-        bool TryRoadHeight(int m, float s, out float t, out float height)
-        {
-            t = 0f;
-            height = 0f;
-            var solver = _st.Solver;
-            int twin = _st.TwinMember(m);
-            if (!solver.Active[m] || !solver.Active[twin])
-                return false;
-
-            Vector2 a = Mid(solver.MemberA[m], solver.MemberA[twin]);
-            Vector2 b = Mid(solver.MemberB[m], solver.MemberB[twin]);
-            float du = b.X - a.X;
-            if (Math.Abs(du) < 1e-5f)
-                return false;
-            t = (s - a.X) / du;
-            if (t < 0f || t > 1f)
-                return false;
-            height = a.Y + (b.Y - a.Y) * t;
+            for (int e = 0; e < 3; e++)
+            {
+                int k = g.TriEdges[t + e];
+                if (k >= 0 && !elementActive[k])
+                    return false;
+            }
             return true;
         }
 
-        Vector2 Mid(int node, int twin)
+        /// <summary>Lagged coupling: the wheels' last loads pushed into the deck nodes they rest on.</summary>
+        public void ApplyLoads(Action<int, Vector3> addLoad)
         {
-            var p = _st.Solver.Positions;
-            return _st.Frame.ToPlane((p[node] + p[twin]) * 0.5f);
+            for (int i = 0; i < 4; i++)
+            {
+                if (_fill[i] < 0 || WheelLoad[i] <= 0f)
+                    continue;
+                var g = _st.Fills[_fill[i]];
+                Vector3 f = -_normal[i] * WheelLoad[i];
+                int t = _tri[i];
+                addLoad(g.Tris[t], f * _bary[i].X);
+                addLoad(g.Tris[t + 1], f * _bary[i].Y);
+                addLoad(g.Tris[t + 2], f * _bary[i].Z);
+            }
         }
 
         void UpdatePose()
         {
-            var f = _st.Frame;
-            Vector3 side = f.W * (f.Width * 0.5f);
-            Vector3 rear = f.ToWorld(new Vector2(AxleS(0), _axleHeight[0])) + side;
-            Vector3 front = f.ToWorld(new Vector2(AxleS(1), _axleHeight[1])) + side;
-            Position = (rear + front) * 0.5f;
-            Vector3 d = front - rear;
-            Forward = d.LengthSquared() > 1e-8f ? Vector3.Normalize(d) : f.U;
+            var pitch = Quaternion.CreateFromAxisAngle(Side, -Pitch);
+            Vector3 forward = Vector3.Transform(Direction, pitch);
+            Vector3 up = Vector3.Transform(Vector3.UnitY, pitch);
+            var roll = Quaternion.CreateFromAxisAngle(forward, Roll);
+            Forward = Vector3.Normalize(forward);
+            Up = Vector3.Normalize(Vector3.Transform(up, roll));
         }
     }
 }

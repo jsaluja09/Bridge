@@ -4,141 +4,296 @@ using System.Numerics;
 
 namespace BridgeBuilder.Core
 {
-    public struct DesignNode
+    public enum NodeKind
     {
-        public Vector2 Position;
-        public bool Anchor;
+        Free,
+        SurfaceAnchor,
+        GroundAnchor,
     }
 
-    public struct DesignMember
+    public enum StrokeShape
     {
-        public int A;
-        public int B;
+        Line,
+        Arc,
+        Polyline,
     }
 
-    public enum AddLineResult
+    /// <summary>A snap point. Every node is a solver node (spec 2.3). Anchors are supports.</summary>
+    public sealed class Node
     {
-        Added,
-        NoStartNode,
-        TooShort,
-        Duplicate,
-        TooMany,
+        public int Id;
+        public Vector3 Position;          // room units
+        public NodeKind Kind;
+        public int Surface = -1;          // which surface an anchor belongs to
+        public int OwnerLine = -1;        // the line that created this node, -1 for anchors
+
+        public bool IsFixed => Kind != NodeKind.Free;
+    }
+
+    /// <summary>A drawn line: a chain of nodes; each consecutive pair is one frame element.</summary>
+    public sealed class Line
+    {
+        public int Id;
+        public StrokeShape Shape;
+        public List<int> Nodes = new List<int>();
+        public float Section = 1f;        // per-member section multiplier, constant in the MVP (spec 2.7)
+    }
+
+    /// <summary>A filled, planar, closed polygon: a visible surface plus hidden bracing (spec 2.4).</summary>
+    public sealed class Fill
+    {
+        public int Id;
+        public List<int> Corners = new List<int>();     // what the player tapped
+        public List<int> Boundary = new List<int>();    // every node around the loop
+        public List<int> Triangles = new List<int>();   // node id triples
+        public List<(int a, int b)> Bracing = new List<(int, int)>();
+        public Vector3 Normal;
+        public float Area;                              // room m^2
+        public bool IsRoad;
+
+        public float SlopeDeg => MathF.Acos(Math.Clamp(MathF.Abs(Normal.Y), 0f, 1f)) * (180f / MathF.PI);
+    }
+
+    /// <summary>A marked real surface: the edge facing the gap and its anchor dots.</summary>
+    public sealed class Surface
+    {
+        public int Index;
+        public Vector3 EdgeA;
+        public Vector3 EdgeB;
+        public Vector3 Back;              // horizontal, pointing away from the gap
+        public float Height;
+        public readonly List<int> Anchors = new List<int>();   // ordered from EdgeA to EdgeB
+
+        public Vector3 Mid => (EdgeA + EdgeB) * 0.5f;
+        public float EdgeLength => Vector3.Distance(EdgeA, EdgeB);
     }
 
     /// <summary>
-    /// The side of the bridge the player draws, in plane coordinates (u along the gap, v up).
-    /// The 3D bridge is built from this when a test starts.
+    /// The player's bridge, in room units. Holds nodes, lines, fills and the two surfaces.
+    /// Change it through BridgeEditing so every action is undoable.
     /// </summary>
     public sealed class BridgeDesign
     {
-        public readonly List<DesignNode> Nodes = new List<DesignNode>();
-        public readonly List<DesignMember> Members = new List<DesignMember>();
+        public readonly BridgeSettings Settings;
+        public readonly List<Node> Nodes = new List<Node>();
+        public readonly List<Line> Lines = new List<Line>();
+        public readonly List<Fill> Fills = new List<Fill>();
+        public readonly Surface[] Surfaces = { new Surface { Index = 0 }, new Surface { Index = 1 } };
+        public readonly List<int> GroundAnchors = new List<int>();
+        public float GroundY;
+        public int StartSurface;
+        public BridgeFrame Frame { get; private set; }
 
-        public float FarU { get; private set; }
-        public float FarV { get; private set; }
+        readonly Dictionary<int, Node> _nodes = new Dictionary<int, Node>();
+        readonly Dictionary<int, Line> _lines = new Dictionary<int, Line>();
+        readonly Dictionary<int, Fill> _fills = new Dictionary<int, Fill>();
+        int _nextId = 1;
 
-        readonly BridgeSettings _settings;
-        readonly Stack<(int member, int createdNode)> _history = new Stack<(int, int)>();
+        /// <summary>Bumped on every change, so views and previews know when to refresh.</summary>
+        public int Version { get; private set; }
 
-        /// <summary>Anchors along both surfaces. The start tap is (0,0); the far tap is (farU, farV).</summary>
-        public BridgeDesign(BridgeSettings settings, float farU, float farV)
+        public BridgeDesign(BridgeSettings settings) => Settings = settings;
+
+        /// <summary>
+        /// Four taps: both ends of each surface's edge facing the gap (spec 2.2). groundY is the real floor.
+        /// </summary>
+        public static BridgeDesign Create(BridgeSettings settings, Vector3 startA, Vector3 startB, Vector3 farA, Vector3 farB, float groundY)
         {
-            _settings = settings;
-            FarU = farU;
-            FarV = farV;
-            float s = settings.AnchorSpacing;
-            AddAnchor(new Vector2(-s, 0f));
-            AddAnchor(new Vector2(0f, 0f));
-            AddAnchor(new Vector2(farU, farV));
-            AddAnchor(new Vector2(farU + s, farV));
+            var d = new BridgeDesign(settings) { GroundY = groundY };
+            Vector3 mid0 = (startA + startB) * 0.5f, mid1 = (farA + farB) * 0.5f;
+            d.Frame = new BridgeFrame(mid0, mid1 - mid0, Vector3.UnitY);
+
+            d.SetupSurface(0, startA, startB, mid1);
+            d.SetupSurface(1, farA, farB, mid0);
+            d.SetupGround(new[] { startA, startB, farA, farB });
+            return d;
         }
 
-        public int LineCount => _history.Count;
+        void SetupSurface(int index, Vector3 a, Vector3 b, Vector3 otherMid)
+        {
+            var s = Surfaces[index];
+            s.EdgeA = a;
+            s.EdgeB = b;
+            s.Height = (a.Y + b.Y) * 0.5f;
+            Vector3 edge = new Vector3(b.X - a.X, 0f, b.Z - a.Z);
+            Vector3 back = edge.LengthSquared() > 1e-8f
+                ? Vector3.Normalize(Vector3.Cross(Vector3.UnitY, edge))
+                : -Frame.U;
+            Vector3 toOther = otherMid - s.Mid;
+            if (Vector3.Dot(back, toOther) > 0f)
+                back = -back;
+            s.Back = back;
 
-        void AddAnchor(Vector2 p) => Nodes.Add(new DesignNode { Position = p, Anchor = true });
+            int segments = Math.Max(1, (int)MathF.Round(s.EdgeLength / Settings.SnapSpacing));
+            for (int i = 0; i <= segments; i++)
+            {
+                var node = new Node { Id = NewId(), Position = Vector3.Lerp(a, b, i / (float)segments), Kind = NodeKind.SurfaceAnchor, Surface = index };
+                AddNode(node);
+                s.Anchors.Add(node.Id);
+            }
+        }
 
-        public int FindNode(Vector2 p, float radius)
+        void SetupGround(Vector3[] taps)
+        {
+            float lowest = MathF.Min(Surfaces[0].Height, Surfaces[1].Height);
+            if (GroundY > lowest - 0.1f)
+                return;
+
+            // Footprint under the span: between the two edges along U, across their extent along Side.
+            float sMin = float.MaxValue, sMax = float.MinValue;
+            foreach (var tap in taps)
+            {
+                float side = Frame.Local(tap).Y;
+                sMin = Math.Min(sMin, side);
+                sMax = Math.Max(sMax, side);
+            }
+            float uMin = Math.Max(Frame.Local(taps[0]).X, Frame.Local(taps[1]).X);
+            float uMax = Math.Min(Frame.Local(taps[2]).X, Frame.Local(taps[3]).X);
+
+            // An even grid: interior points along the gap, edge to edge across it.
+            float g = Settings.GroundGridSpacing;
+            int nu = Math.Max(2, (int)MathF.Round((uMax - uMin) / g));
+            int ns = Math.Max(1, (int)MathF.Round((sMax - sMin) / g));
+            for (int i = 1; i < nu; i++)
+            {
+                float u = uMin + (uMax - uMin) * i / nu;
+                for (int j = 0; j <= ns; j++)
+                {
+                    float s = sMin + (sMax - sMin) * j / ns;
+                    Vector3 p = Frame.World(u, s, 0f);
+                    p.Y = GroundY;
+                    var node = new Node { Id = NewId(), Position = p, Kind = NodeKind.GroundAnchor };
+                    AddNode(node);
+                    GroundAnchors.Add(node.Id);
+                }
+            }
+        }
+
+        // ---------- Lookup ----------
+
+        public Node GetNode(int id) => _nodes[id];
+        public bool TryGetNode(int id, out Node node) => _nodes.TryGetValue(id, out node);
+        public Line GetLine(int id) => _lines[id];
+        public bool TryGetLine(int id, out Line line) => _lines.TryGetValue(id, out line);
+        public Fill GetFill(int id) => _fills[id];
+        public bool TryGetFill(int id, out Fill fill) => _fills.TryGetValue(id, out fill);
+
+        public int NewId() => _nextId++;
+
+        /// <summary>Nearest node within radius, or -1.</summary>
+        public int FindNode(Vector3 p, float radius, int exclude = -1)
         {
             int best = -1;
             float bestDist = radius;
-            for (int i = 0; i < Nodes.Count; i++)
+            foreach (var n in Nodes)
             {
-                float d = Vector2.Distance(Nodes[i].Position, p);
+                if (n.Id == exclude)
+                    continue;
+                float d = Vector3.Distance(n.Position, p);
                 if (d <= bestDist)
                 {
                     bestDist = d;
-                    best = i;
+                    best = n.Id;
                 }
             }
             return best;
         }
 
-        /// <summary>Where a line ending at p would land: an existing node, else the snap grid.</summary>
-        public Vector2 SnapEnd(Vector2 p, out int node)
+        /// <summary>True if a and b are consecutive nodes of some line, i.e. joined by a frame element.</summary>
+        public bool HasElement(int a, int b)
         {
-            node = FindNode(p, _settings.NodeSnapRadius);
-            if (node >= 0)
-                return Nodes[node].Position;
-            float g = _settings.SnapGrid;
-            return new Vector2(MathF.Round(p.X / g) * g, MathF.Round(p.Y / g) * g);
-        }
-
-        public AddLineResult TryAddLine(int start, Vector2 end)
-        {
-            if (start < 0 || start >= Nodes.Count)
-                return AddLineResult.NoStartNode;
-            if (Members.Count >= _settings.MaxDrawnMembers)
-                return AddLineResult.TooMany;
-
-            Vector2 p = SnapEnd(end, out int endNode);
-            if (endNode == start || Vector2.Distance(Nodes[start].Position, p) < _settings.MinLineLength)
-                return AddLineResult.TooShort;
-
-            if (endNode >= 0)
+            foreach (var line in Lines)
             {
-                foreach (var m in Members)
+                for (int i = 0; i + 1 < line.Nodes.Count; i++)
                 {
-                    if ((m.A == start && m.B == endNode) || (m.A == endNode && m.B == start))
-                        return AddLineResult.Duplicate;
+                    int x = line.Nodes[i], y = line.Nodes[i + 1];
+                    if ((x == a && y == b) || (x == b && y == a))
+                        return true;
                 }
             }
+            return false;
+        }
 
-            int created = -1;
-            if (endNode < 0)
+        public int FreeNodeCount
+        {
+            get
             {
-                Nodes.Add(new DesignNode { Position = p });
-                endNode = created = Nodes.Count - 1;
+                int count = 0;
+                foreach (var n in Nodes)
+                {
+                    if (!n.IsFixed)
+                        count++;
+                }
+                return count;
             }
-
-            Members.Add(new DesignMember { A = start, B = endNode });
-            _history.Push((Members.Count - 1, created));
-            return AddLineResult.Added;
         }
 
-        public bool Undo()
+        public float LineLength(Line line)
         {
-            if (_history.Count == 0)
-                return false;
-            var (member, created) = _history.Pop();
-            Members.RemoveAt(member);
-            if (created >= 0)
-                Nodes.RemoveAt(created);
-            return true;
+            float len = 0f;
+            for (int i = 0; i + 1 < line.Nodes.Count; i++)
+                len += Vector3.Distance(GetNode(line.Nodes[i]).Position, GetNode(line.Nodes[i + 1]).Position);
+            return len;
         }
 
-        public void Clear()
+        /// <summary>Material used so far (spec 2.9): lines by length, fills by area.</summary>
+        public float Cost
         {
-            while (Undo()) { }
+            get
+            {
+                float cost = 0f;
+                foreach (var line in Lines)
+                    cost += LineLength(line) * Settings.CostPerMeter;
+                foreach (var fill in Fills)
+                    cost += fill.Area * Settings.CostPerSquareMeter;
+                return cost;
+            }
         }
 
-        public bool IsRoad(int member)
+        // ---------- Raw mutation (BridgeEditing wraps these in undoable edits) ----------
+
+        internal void AddNode(Node n)
         {
-            var m = Members[member];
-            Vector2 d = Nodes[m.B].Position - Nodes[m.A].Position;
-            if (MathF.Abs(d.X) < 1e-4f)
-                return false;
-            float slope = MathF.Atan2(MathF.Abs(d.Y), MathF.Abs(d.X)) * (180f / MathF.PI);
-            return slope <= _settings.MaxRoadSlopeDeg;
+            Nodes.Add(n);
+            _nodes[n.Id] = n;
+            Version++;
         }
+
+        internal void RemoveNode(int id)
+        {
+            Nodes.Remove(_nodes[id]);
+            _nodes.Remove(id);
+            Version++;
+        }
+
+        internal void AddLine(Line l)
+        {
+            Lines.Add(l);
+            _lines[l.Id] = l;
+            Version++;
+        }
+
+        internal void RemoveLine(int id)
+        {
+            Lines.Remove(_lines[id]);
+            _lines.Remove(id);
+            Version++;
+        }
+
+        internal void AddFill(Fill f)
+        {
+            Fills.Add(f);
+            _fills[f.Id] = f;
+            Version++;
+        }
+
+        internal void RemoveFill(int id)
+        {
+            Fills.Remove(_fills[id]);
+            _fills.Remove(id);
+            Version++;
+        }
+
+        internal void Touch() => Version++;
     }
 }
