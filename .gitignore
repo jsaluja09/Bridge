@@ -115,7 +115,10 @@ InitTestScene*.unity*
 
 # Hand-written SDK projects for the Unity-free core.
 # Unity-generated csproj and sln files stay ignored by the rules above.
-!/dotnet/**/*.csproj
-!/dotnet/**/*.sln
+!/dotnet/BridgeBuilder.Core.csproj
+!/dotnet/BridgeBuilder.sln
+!/tests/BridgeBuilder.Core.Tests/BridgeBuilder.Core.Tests.csproj
 /dotnet/**/[Bb]in/
 /dotnet/**/[Oo]bj/
+/tests/**/[Bb]in/
+/tests/**/[Oo]bj/

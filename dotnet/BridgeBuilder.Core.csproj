@@ -6,12 +6,12 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <AssemblyName>BridgeBuilder.Core</AssemblyName>
-    <RootNamespace>BridgeBuilder</RootNamespace>
+    <RootNamespace>BridgeBuilder.Core</RootNamespace>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\Assets\BridgeBuilder.Core\**\*.cs" />
+    <Compile Include="..\Assets\BridgeBuilder.Core\**\*.cs" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,21 @@
+{
+  "name": "Fixture 6: progressive failure",
+  "note": "Stub: geometry only (room units, Y up), with no loads, sections, or expected answers. Three members run from three fixed surface nodes to one shared free node, so removing any one leaves a standing structure. The issue that owns this file replaces the stub and deletes \"stub\": true, which ends the stub-only checks in ScaffoldTests.",
+  "stub": true,
+  "nodes": [
+    { "id": 1, "position": [0.0, 1.0, 0.0], "fixed": true, "surfaceId": 1 },
+    { "id": 2, "position": [0.0, 1.0, 0.2], "fixed": true, "surfaceId": 1 },
+    { "id": 3, "position": [1.0, 1.0, 0.0], "fixed": true, "surfaceId": 2 },
+    { "id": 4, "position": [0.5, 1.0, 0.1], "fixed": false }
+  ],
+  "members": [
+    { "id": 1, "nodeA": 1, "nodeB": 4, "lineId": 1 },
+    { "id": 2, "nodeA": 2, "nodeB": 4, "lineId": 2 },
+    { "id": 3, "nodeA": 3, "nodeB": 4, "lineId": 3 }
+  ],
+  "lines": [
+    { "id": 1, "memberIds": [1] },
+    { "id": 2, "memberIds": [2] },
+    { "id": 3, "memberIds": [3] }
+  ]
+}

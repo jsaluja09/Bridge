@@ -1,0 +1,20 @@
+{
+  "name": "Fixture 3: unbraced rectangle",
+  "note": "Stub: geometry only (room units, Y up), with no loads, sections, or expected answers. Four edge members form a 2 by 1 rectangle with its two bottom corners fixed and no diagonal. The issue that owns this file replaces the stub and deletes \"stub\": true, which ends the stub-only checks in ScaffoldTests.",
+  "stub": true,
+  "nodes": [
+    { "id": 1, "position": [0.0, 0.0, 0.0], "fixed": true },
+    { "id": 2, "position": [2.0, 0.0, 0.0], "fixed": true },
+    { "id": 3, "position": [2.0, 1.0, 0.0], "fixed": false },
+    { "id": 4, "position": [0.0, 1.0, 0.0], "fixed": false }
+  ],
+  "members": [
+    { "id": 1, "nodeA": 1, "nodeB": 2, "lineId": 1 },
+    { "id": 2, "nodeA": 2, "nodeB": 3, "lineId": 1 },
+    { "id": 3, "nodeA": 3, "nodeB": 4, "lineId": 1 },
+    { "id": 4, "nodeA": 4, "nodeB": 1, "lineId": 1 }
+  ],
+  "lines": [
+    { "id": 1, "memberIds": [1, 2, 3, 4] }
+  ]
+}

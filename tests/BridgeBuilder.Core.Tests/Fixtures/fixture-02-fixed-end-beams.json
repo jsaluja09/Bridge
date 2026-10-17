@@ -1,0 +1,21 @@
+{
+  "name": "Fixture 2: fixed-end beams",
+  "note": "Stub: geometry only (room units, Y up), with no loads, sections, or expected answers. Line 1 is a cantilever fixed at node 1. Line 2 is a beam fixed at both ends (nodes 3 and 5) made of two colinear members. The issue that owns this file replaces the stub and deletes \"stub\": true, which ends the stub-only checks in ScaffoldTests.",
+  "stub": true,
+  "nodes": [
+    { "id": 1, "position": [0.0, 0.0, 0.0], "fixed": true },
+    { "id": 2, "position": [3.0, 0.0, 0.0], "fixed": false },
+    { "id": 3, "position": [0.0, 0.0, 2.0], "fixed": true },
+    { "id": 4, "position": [2.0, 0.0, 2.0], "fixed": false },
+    { "id": 5, "position": [4.0, 0.0, 2.0], "fixed": true }
+  ],
+  "members": [
+    { "id": 1, "nodeA": 1, "nodeB": 2, "lineId": 1 },
+    { "id": 2, "nodeA": 3, "nodeB": 4, "lineId": 2 },
+    { "id": 3, "nodeA": 4, "nodeB": 5, "lineId": 2 }
+  ],
+  "lines": [
+    { "id": 1, "memberIds": [1] },
+    { "id": 2, "memberIds": [2, 3] }
+  ]
+}

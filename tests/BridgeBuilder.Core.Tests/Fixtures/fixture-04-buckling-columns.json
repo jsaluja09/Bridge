@@ -1,0 +1,19 @@
+{
+  "name": "Fixture 4: long and short compression members",
+  "note": "Stub: geometry only (room units, Y up), with no loads, sections, or expected answers. Line 1 is the short column (length 1) and line 2 the long column (length 2), each rising from a fixed base. The issue that owns this file replaces the stub and deletes \"stub\": true, which ends the stub-only checks in ScaffoldTests.",
+  "stub": true,
+  "nodes": [
+    { "id": 1, "position": [0.0, 0.0, 0.0], "fixed": true },
+    { "id": 2, "position": [0.0, 1.0, 0.0], "fixed": false },
+    { "id": 3, "position": [1.0, 0.0, 0.0], "fixed": true },
+    { "id": 4, "position": [1.0, 2.0, 0.0], "fixed": false }
+  ],
+  "members": [
+    { "id": 1, "nodeA": 1, "nodeB": 2, "lineId": 1 },
+    { "id": 2, "nodeA": 3, "nodeB": 4, "lineId": 2 }
+  ],
+  "lines": [
+    { "id": 1, "memberIds": [1] },
+    { "id": 2, "memberIds": [2] }
+  ]
+}
