@@ -1,0 +1,17 @@
+{
+  "name": "Fixed-end beams",
+  "note": "do not modify without human approval",
+  "scale": 1,
+  "nodes": [
+    { "id": 0, "position": [0, 0, 0], "fixed": true },
+    { "id": 1, "position": [3, 0, 0] },
+    { "id": 10, "position": [0, 0, 0], "fixed": true },
+    { "id": 11, "position": [2, 0, 0] },
+    { "id": 12, "position": [4, 0, 0], "fixed": true }
+  ],
+  "members": [
+    { "id": 0, "nodeA": 0, "nodeB": 1 },
+    { "id": 10, "nodeA": 10, "nodeB": 11 },
+    { "id": 11, "nodeA": 11, "nodeB": 12 }
+  ]
+}

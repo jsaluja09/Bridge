@@ -1,0 +1,17 @@
+{
+  "name": "Unbraced rectangle",
+  "note": "do not modify without human approval",
+  "scale": 1,
+  "nodes": [
+    { "id": 0, "position": [0, 0, 0], "fixed": true },
+    { "id": 1, "position": [2, 0, 0], "fixed": true },
+    { "id": 2, "position": [2, 1, 0] },
+    { "id": 3, "position": [0, 1, 0] }
+  ],
+  "members": [
+    { "id": 0, "nodeA": 0, "nodeB": 1 },
+    { "id": 1, "nodeA": 1, "nodeB": 2 },
+    { "id": 2, "nodeA": 2, "nodeB": 3 },
+    { "id": 3, "nodeA": 3, "nodeB": 0 }
+  ]
+}

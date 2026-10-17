@@ -1,0 +1,17 @@
+{
+  "name": "Progressive failure",
+  "note": "A redundant two-member frame. Member 0 uses the weak section 1 and fails first; member 1 then carries the load alone.",
+  "scale": 1,
+  "nodes": [
+    { "id": 0, "position": [-1, 0, 0], "fixed": true },
+    { "id": 1, "position": [1, 0, 0], "fixed": true },
+    { "id": 2, "position": [0, 1, 0] }
+  ],
+  "members": [
+    { "id": 0, "nodeA": 0, "nodeB": 2, "sectionId": 1 },
+    { "id": 1, "nodeA": 1, "nodeB": 2, "sectionId": 0 }
+  ],
+  "load": { "node": 2, "force": [0, -60000, 0] },
+  "dt": 0.01,
+  "failsFirst": 0
+}

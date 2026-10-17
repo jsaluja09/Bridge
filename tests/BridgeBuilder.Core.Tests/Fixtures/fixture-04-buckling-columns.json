@@ -1,0 +1,15 @@
+{
+  "name": "Long and short columns",
+  "note": "do not modify without human approval. Both columns fixed-fixed, no sidesway, K = 0.5.",
+  "scale": 1,
+  "nodes": [
+    { "id": 0, "position": [0, 0, 0], "fixed": true },
+    { "id": 1, "position": [0, 1, 0], "fixed": true },
+    { "id": 2, "position": [5, 0, 0], "fixed": true },
+    { "id": 3, "position": [5, 2, 0], "fixed": true }
+  ],
+  "members": [
+    { "id": 0, "nodeA": 0, "nodeB": 1 },
+    { "id": 1, "nodeA": 2, "nodeB": 3 }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "Pier to the ground plane",
+  "note": "One pier from a fixed ground anchor. Closed-form check in W1-03: both ends fixed, K = 0.5, L = 2.",
+  "scale": 1,
+  "nodes": [
+    { "id": 0, "position": [0, 0, 0], "fixed": true, "groundAnchor": true },
+    { "id": 1, "position": [0, 2, 0] }
+  ],
+  "members": [
+    { "id": 0, "nodeA": 0, "nodeB": 1 }
+  ]
+}

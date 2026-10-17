@@ -1,0 +1,37 @@
+{
+  "name": "Triangulated truss",
+  "note": "Spec 5 fixture 5: a Pratt-style truss across the same 1 m gap as fixture 1, 0.2 m deep, panels of 0.2 m. Room units, 20x. Must hold the standard car with margin.",
+  "scale": 20,
+  "nodes": [
+    { "id": 0, "position": [0.0, 0.75, 0.0], "fixed": true, "surfaceId": 0 },
+    { "id": 1, "position": [0.2, 0.75, 0.0] },
+    { "id": 2, "position": [0.4, 0.75, 0.0] },
+    { "id": 3, "position": [0.6, 0.75, 0.0] },
+    { "id": 4, "position": [0.8, 0.75, 0.0] },
+    { "id": 5, "position": [1.0, 0.75, 0.0], "fixed": true, "surfaceId": 1 },
+    { "id": 6, "position": [0.2, 0.95, 0.0] },
+    { "id": 7, "position": [0.4, 0.95, 0.0] },
+    { "id": 8, "position": [0.6, 0.95, 0.0] },
+    { "id": 9, "position": [0.8, 0.95, 0.0] }
+  ],
+  "members": [
+    { "id": 0, "nodeA": 0, "nodeB": 1, "lineId": 0 },
+    { "id": 1, "nodeA": 1, "nodeB": 2, "lineId": 1 },
+    { "id": 2, "nodeA": 2, "nodeB": 3, "lineId": 2 },
+    { "id": 3, "nodeA": 3, "nodeB": 4, "lineId": 3 },
+    { "id": 4, "nodeA": 4, "nodeB": 5, "lineId": 4 },
+    { "id": 5, "nodeA": 6, "nodeB": 7, "lineId": 5 },
+    { "id": 6, "nodeA": 7, "nodeB": 8, "lineId": 6 },
+    { "id": 7, "nodeA": 8, "nodeB": 9, "lineId": 7 },
+    { "id": 8, "nodeA": 0, "nodeB": 6, "lineId": 8 },
+    { "id": 9, "nodeA": 9, "nodeB": 5, "lineId": 9 },
+    { "id": 10, "nodeA": 1, "nodeB": 6, "lineId": 10 },
+    { "id": 11, "nodeA": 2, "nodeB": 7, "lineId": 11 },
+    { "id": 12, "nodeA": 3, "nodeB": 8, "lineId": 12 },
+    { "id": 13, "nodeA": 4, "nodeB": 9, "lineId": 13 },
+    { "id": 14, "nodeA": 6, "nodeB": 2, "lineId": 14 },
+    { "id": 15, "nodeA": 7, "nodeB": 3, "lineId": 15 },
+    { "id": 16, "nodeA": 9, "nodeB": 3, "lineId": 16 }
+  ],
+  "deckNodes": [1, 2, 3, 4]
+}

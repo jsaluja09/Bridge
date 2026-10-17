@@ -1,0 +1,16 @@
+{
+  "name": "Two bare cantilevers",
+  "note": "Spec 5 fixture 1: two lines from the surfaces with nothing between the free ends. Room units, 20x. Must fail under the standard car.",
+  "scale": 20,
+  "nodes": [
+    { "id": 0, "position": [0.0, 0.75, 0.0], "fixed": true, "surfaceId": 0 },
+    { "id": 1, "position": [0.45, 0.75, 0.0] },
+    { "id": 2, "position": [1.0, 0.75, 0.0], "fixed": true, "surfaceId": 1 },
+    { "id": 3, "position": [0.55, 0.75, 0.0] }
+  ],
+  "members": [
+    { "id": 0, "nodeA": 0, "nodeB": 1, "lineId": 0 },
+    { "id": 1, "nodeA": 2, "nodeB": 3, "lineId": 1 }
+  ],
+  "tips": [1, 3]
+}

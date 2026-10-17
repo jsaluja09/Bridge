@@ -122,3 +122,12 @@ Assets/Resources.meta
 *_BurstDebugInformation_DoNotShip/
 *_BackUpThisFolder_ButDontShipItWithYourGame/
 *.apk
+
+# Committed .NET projects for the Core library (everything else *.csproj/*.sln stays ignored)
+!dotnet/BridgeBuilder.Core.csproj
+!tests/BridgeBuilder.Core.Tests/BridgeBuilder.Core.Tests.csproj
+!dotnet/BridgeBuilder.sln
+/dotnet/bin/
+/dotnet/obj/
+/tests/**/bin/
+/tests/**/obj/
