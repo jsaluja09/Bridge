@@ -1,7 +1,8 @@
 {
   "name": "Fixture 5: triangulated truss",
-  "note": "Stub: geometry only (room units, Y up), with no loads, sections, or expected answers. A Warren truss spans the fixture 1 gap: line 1 is the deck, line 2 the zigzag of diagonals, line 3 the top chord. The issue that owns this file replaces the stub and deletes \"stub\": true, which ends the stub-only checks in ScaffoldTests.",
-  "stub": true,
+  "note": "Spec 5 fixture 5, issue W2-07. A Warren truss spans the fixture 1 gap between surfaces 1 and 2: line 1 is the deck (nodes 1, 2, 3), line 2 the zigzag of diagonals (nodes 1, 4, 2, 5, 3), and line 3 the top chord (nodes 4, 5), 0.25 room units above the deck.",
+  "description": "Positions are room units (Y up) and go through the scale adapter at Constants.Scale.RoomToBridge. Lines are stored as drawn, vertex to vertex; FixtureCalibrationTests divides each one the way the game does, with EqualSegments.SnapPolyline at Constants.Snapping.TargetSpacingMeters, which keeps these node ids. At 0.1 m that gives 10 deck segments, 4 on each diagonal, and 5 on the top chord, so the deck bends between panel points. One static solve carries Constants.Human.CarMassKg * Constants.Loads.Gravity downward in bridge-world, split equally across the free nodes of the divided deckLineId. Every member uses the Constants.Section tube with the Constants.Human material, so the file holds no section. The worst-member utilization must stay below Constants.Human.Fixture5MaximumUtilization.",
+  "deckLineId": 1,
   "nodes": [
     { "id": 1, "position": [0.0, 1.0, 0.0], "fixed": true, "surfaceId": 1 },
     { "id": 2, "position": [0.5, 1.0, 0.0], "fixed": false },
