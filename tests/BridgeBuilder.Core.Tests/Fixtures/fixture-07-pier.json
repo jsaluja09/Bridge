@@ -1,7 +1,6 @@
 {
   "name": "Fixture 7: pier to ground plane",
-  "note": "Stub: geometry only (room units, Y up), with no loads, sections, or expected answers. Line 1 is a deck between two surfaces at height 2. Line 2 is one vertical pier of length 2 from a fixed ground anchor at floor height 0 up to the deck midpoint. The issue that owns this file replaces the stub and deletes \"stub\": true, which ends the stub-only checks in ScaffoldTests.",
-  "stub": true,
+  "note": "Spec 5 fixture 7, issue W1-03. Line 1 is a deck between two surfaces at height 2. Line 2 is one vertical pier (member 3) of length 2 from a fixed ground anchor at floor height 0 up to the deck midpoint. All members share section 1. The capacity check treats the pier as fixed at both ends with no sidesway (effectiveLengthFactor K = 0.5): the anchor is fixed, and the deck, fixed at both surfaces, holds the top. The pier has the E, I, and A of the long fixture 4 column, so expectedCriticalLoad (N) matches that column, and its yield strength is high enough that buckling governs. Capacity tests read member lengths from the node positions with no room-to-bridge scale. cy and cz are outer-fiber distances that only the bending check reads.",
   "nodes": [
     { "id": 1, "position": [0.0, 2.0, 0.0], "fixed": true, "surfaceId": 1 },
     { "id": 2, "position": [0.5, 2.0, 0.0], "fixed": false },
@@ -9,12 +8,18 @@
     { "id": 4, "position": [0.5, 0.0, 0.0], "fixed": true, "groundAnchor": true }
   ],
   "members": [
-    { "id": 1, "nodeA": 1, "nodeB": 2, "lineId": 1 },
-    { "id": 2, "nodeA": 2, "nodeB": 3, "lineId": 1 },
-    { "id": 3, "nodeA": 4, "nodeB": 2, "lineId": 2 }
+    { "id": 1, "nodeA": 1, "nodeB": 2, "sectionId": 1, "lineId": 1 },
+    { "id": 2, "nodeA": 2, "nodeB": 3, "sectionId": 1, "lineId": 1 },
+    { "id": 3, "nodeA": 4, "nodeB": 2, "sectionId": 1, "lineId": 2 }
   ],
   "lines": [
     { "id": 1, "memberIds": [1, 2] },
     { "id": 2, "memberIds": [3] }
-  ]
+  ],
+  "sections": [
+    { "id": 1, "e": 2.0e11, "a": 1.0e-3, "iy": 1.0e-6, "iz": 1.0e-6, "yieldStrength": 1.0e10, "cy": 0.05, "cz": 0.05 }
+  ],
+  "pierMemberId": 3,
+  "effectiveLengthFactor": 0.5,
+  "expectedCriticalLoad": 1973920.8802178716
 }

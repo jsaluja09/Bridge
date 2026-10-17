@@ -1,7 +1,6 @@
 {
   "name": "Fixture 4: long and short compression members",
-  "note": "Stub: geometry only (room units, Y up), with no loads, sections, or expected answers. Line 1 is the short column (length 1) and line 2 the long column (length 2), each rising from a fixed base. The issue that owns this file replaces the stub and deletes \"stub\": true, which ends the stub-only checks in ScaffoldTests.",
-  "stub": true,
+  "note": "Spec 5 fixture 4, issue W1-03. Do not modify these numbers without human approval. Line 1 is the short column (member 1, length 1) and line 2 the long column (member 2, length 2). Each rises from a fixed base, and both share section 1. The capacity check treats both columns as fixed-fixed with no sidesway (effectiveLengthFactor K = 0.5). A node's fixed flag restrains all six degrees of freedom, so the tops stay free in the geometry. Under the same compression the long column buckles first; expectedCriticalLoad is pi^2 * E * I / (K * L)^2 in N. Capacity tests read member lengths from the node positions with no room-to-bridge scale. cy and cz are outer-fiber distances that only the bending check reads; these columns carry no moment.",
   "nodes": [
     { "id": 1, "position": [0.0, 0.0, 0.0], "fixed": true },
     { "id": 2, "position": [0.0, 1.0, 0.0], "fixed": false },
@@ -9,11 +8,19 @@
     { "id": 4, "position": [1.0, 2.0, 0.0], "fixed": false }
   ],
   "members": [
-    { "id": 1, "nodeA": 1, "nodeB": 2, "lineId": 1 },
-    { "id": 2, "nodeA": 3, "nodeB": 4, "lineId": 2 }
+    { "id": 1, "nodeA": 1, "nodeB": 2, "sectionId": 1, "lineId": 1 },
+    { "id": 2, "nodeA": 3, "nodeB": 4, "sectionId": 1, "lineId": 2 }
   ],
   "lines": [
     { "id": 1, "memberIds": [1] },
     { "id": 2, "memberIds": [2] }
+  ],
+  "sections": [
+    { "id": 1, "e": 2.0e11, "a": 1.0e-3, "iy": 1.0e-6, "iz": 1.0e-6, "yieldStrength": 4.0e9, "cy": 0.05, "cz": 0.05 }
+  ],
+  "effectiveLengthFactor": 0.5,
+  "columns": [
+    { "memberId": 1, "role": "short", "length": 1.0, "expectedCriticalLoad": 7895683.5208714865 },
+    { "memberId": 2, "role": "long", "length": 2.0, "expectedCriticalLoad": 1973920.8802178716 }
   ]
 }
