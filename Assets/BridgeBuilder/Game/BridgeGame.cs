@@ -1,63 +1,71 @@
 using System.Collections.Generic;
+using System.Linq;
 using BridgeBuilder.Core;
 using UnityEngine;
 
 namespace BridgeBuilder.Game
 {
     /// <summary>
-    /// The game loop (spec section 6): pick a challenge, mark two surfaces with four taps, build with the
-    /// Draw / Fill / Road / Delete tools, then send the car across. The simulation runs on a worker thread;
-    /// this class turns input into design edits and draws whatever state is current.
-    /// Split across partial files: flow (here), tools, drawing, and HUD/audio.
+    /// The game loop, kept simple for students (spec 11): pick a challenge, tap the two ends of the bridge,
+    /// hold the trigger to draw lines in the air, press A to send the car across. Flat lines side by side
+    /// become the road automatically. Physics runs on a worker thread; this class turns input into model edits
+    /// and draws whatever state is current. Split across partial files: flow (here), input, drawing, HUD.
     /// </summary>
     [RequireComponent(typeof(ControllerPointer), typeof(BridgeView), typeof(CarView))]
     public sealed partial class BridgeGame : MonoBehaviour
     {
-        [SerializeField] BridgeSettings settings = new BridgeSettings();
-        [SerializeField] Challenge[] challenges = Challenge.Defaults();
         [Tooltip("Show the real room behind the game (Quest passthrough).")]
         [SerializeField] bool passthrough = true;
 
-        enum Phase { Brief, MarkSurfaces, Build, Testing }
+        enum Phase { Brief, Place, Build, Testing }
+
+        sealed class UnityClock : IClock
+        {
+            public double Now => Time.realtimeSinceStartupAsDouble;
+        }
 
         ControllerPointer _pointer;
         BridgeView _view;
         CarView _car;
         SimWorker _worker;
+        PreviewScheduler _scheduler;
 
-        Phase _phase;
+        readonly ChallengeConfig[] _challenges = ChallengeConfig.Defaults();
         int _challengeIndex;
+        Phase _phase;
         readonly List<Vector3> _taps = new List<Vector3>();
 
-        BridgeDesign _design;
-        readonly UndoStack _undo = new UndoStack();
-        BridgeStructure _structure;        // the design compiled, refreshed on every edit
-        Vector3[] _restRoom = new Vector3[0];
-        PreviewResult _preview;
-        int _previewRequested = -1;
-        float _editTime;
-        RoadReport _roads;
-        CarSim _parkedCar;
-        float _roadWarningUntil;
+        Pad[] _pads;
+        List<Vec3> _groundDots = new List<Vec3>();
+        float _floor;
+        BridgeModel _model;
+        StartSurfaceChoice _start;
 
-        BridgeStructure _runStructure;
-        Snapshot _snapshot;
-        int _lastBroken;
+        CompiledBridge _bridge;                   // the model compiled, refreshed on every edit
+        CompiledBridge _previewBridge;
+        PreviewResult _preview;
+
+        CompiledBridge _runBridge;
+        RunSnapshot _snapshot;
+        int _lastLost;
         RunResult _shownResult;
         int _stars;
-        float _budgetFraction;
 
-        Challenge Challenge => challenges[_challengeIndex];
+        ChallengeConfig Challenge => _challenges[_challengeIndex];
+        static double Scale => Constants.Scale.RoomToBridge;
 
         void Awake()
         {
             _pointer = GetComponent<ControllerPointer>();
             _view = GetComponent<BridgeView>();
             _car = GetComponent<CarView>();
-            if (challenges == null || challenges.Length == 0)
-                challenges = Challenge.Defaults();
             CreateFeedback();
             _worker = new SimWorker();
+            _scheduler = new PreviewScheduler(new UnityClock(), () =>
+            {
+                if (_bridge != null)
+                    _worker.RequestPreview(_bridge);
+            });
         }
 
         void Start()
@@ -73,7 +81,7 @@ namespace BridgeBuilder.Game
             switch (_phase)
             {
                 case Phase.Brief: UpdateBrief(); break;
-                case Phase.MarkSurfaces: UpdateMarking(); break;
+                case Phase.Place: UpdatePlace(); break;
                 case Phase.Build: UpdateBuild(); break;
                 case Phase.Testing: UpdateTesting(); break;
             }
@@ -82,26 +90,26 @@ namespace BridgeBuilder.Game
             UpdateAudio();
         }
 
-        // ---------- Brief: choose a challenge (spec 2.9) ----------
+        // ---------- Brief: pick a challenge (spec 2.9) ----------
 
         void UpdateBrief()
         {
-            if (_pointer.ToolStep != 0)
+            if (_pointer.StickStep != 0)
             {
-                _challengeIndex = (_challengeIndex + _pointer.ToolStep + challenges.Length) % challenges.Length;
+                _challengeIndex = (_challengeIndex + _pointer.StickStep + _challenges.Length) % _challenges.Length;
                 Play(snapClip);
             }
             if (_pointer.PrimaryPressed || _pointer.TriggerPressed)
             {
                 _taps.Clear();
-                _phase = Phase.MarkSurfaces;
+                _phase = Phase.Place;
                 Play(snapClip);
             }
         }
 
-        // ---------- Four taps: both ends of each surface's edge (spec 2.2) ----------
+        // ---------- Place: two taps, one for each end of the bridge (spec 11.2) ----------
 
-        void UpdateMarking()
+        void UpdatePlace()
         {
             if (_pointer.ClearPressed)
             {
@@ -116,32 +124,40 @@ namespace BridgeBuilder.Game
 
             _taps.Add(_pointer.Tip);
             Play(snapClip);
-
-            if ((_taps.Count == 2 || _taps.Count == 4) && Vector3.Distance(_taps[_taps.Count - 1], _taps[_taps.Count - 2]) < 0.08f)
-            {
-                Flash("Touch both ends of the edge, at least 8 cm apart");
-                Play(errorClip);
-                _taps.RemoveAt(_taps.Count - 1);
-                return;
-            }
-            if (_taps.Count < 4)
+            if (_taps.Count < 2)
                 return;
 
-            Vector3 gap = (_taps[2] + _taps[3] - _taps[0] - _taps[1]) * 0.5f;
+            Vector3 gap = _taps[1] - _taps[0];
             gap.y = 0f;
-            if (gap.magnitude < 0.25f)
+            if (gap.magnitude < 0.3f)
             {
-                Flash("The surfaces need to be at least 25 cm apart");
+                Flash("Put the two ends at least 30 cm apart");
                 Play(errorClip);
-                _taps.RemoveRange(2, 2);
+                _taps.RemoveAt(1);
                 return;
             }
 
-            float lowestTap = Mathf.Min(Mathf.Min(_taps[0].y, _taps[1].y), Mathf.Min(_taps[2].y, _taps[3].y));
-            float floor = Mathf.Min(_pointer.FloorY, lowestTap - 0.3f);
-            _design = BridgeDesign.Create(settings, _taps[0].ToNumerics(), _taps[1].ToNumerics(), _taps[2].ToNumerics(), _taps[3].ToNumerics(), floor);
-            _undo.Clear();
-            _structure = null;
+            var (a, b) = Pad.FromTaps(_taps[0].ToCore(), _taps[1].ToCore());
+            _pads = new[] { a, b };
+            float lowest = Mathf.Min(_taps[0].y, _taps[1].y);
+            _floor = Mathf.Min(_pointer.FloorY, lowest - 0.3f);
+            _groundDots.Clear();
+            if (_floor < lowest - 0.15f)
+            {
+                var ea = a.Corners();
+                var eb = b.Corners();
+                _groundDots = GroundPlane.Grid(ea[0], ea[1], eb[0], eb[1], _floor).Select(n => n.Position).ToList();
+            }
+
+            _model = new BridgeModel(new BudgetPolicy
+            {
+                CostPerMeter = Constants.Budget.CostPerMeter,
+                CostPerSquareMeter = Constants.Budget.CostPerSquareMeter,
+                MaterialBudget = Challenge.Budget,
+                NodeCap = Constants.Human.NodeCap + Constants.Draw.SupportNodeAllowance,
+            });
+            _start = new StartSurfaceChoice(0, 1);
+            _bridge = null;
             _preview = null;
             _phase = Phase.Build;
         }
@@ -150,60 +166,43 @@ namespace BridgeBuilder.Game
 
         void UpdateBuild()
         {
-            RefreshStructure();
-            UpdateTools();
+            if (_bridge == null || _bridge.ModelVersion != _model.Version)
+                _bridge = BridgeCompiler.Compile(_model, _pads, Scale);
+
+            UpdateBuildInput();
+            _scheduler.Tick();
+            if (_worker.TakePreview(out var previewBridge, out var preview))
+            {
+                _previewBridge = previewBridge;
+                _preview = preview;
+            }
 
             if (_pointer.PrimaryPressed && !Drawing)
                 StartTest();
         }
 
-        /// <summary>Recompiles after edits, and runs the dead-load preview once the player pauses (spec 2.10).</summary>
-        void RefreshStructure()
-        {
-            if (_structure == null || _structure.DesignVersion != _design.Version)
-            {
-                _structure = BridgeStructure.Compile(_design, Challenge);
-                if (_restRoom.Length < _structure.NodeCount)
-                    _restRoom = new Vector3[_structure.NodeCount * 2];
-                for (int i = 0; i < _structure.NodeCount; i++)
-                    _restRoom[i] = _structure.ToRoom(_structure.Rest[i]).ToUnity();
-                _roads = BridgeEditing.ValidateRoads(_design);
-                _parkedCar = new CarSim(_structure);
-                _editTime = Time.time;
-            }
-
-            var preview = _worker.TakePreview();
-            if (preview != null)
-                _preview = preview;
-
-            if (_previewRequested != _design.Version && !Drawing && Time.time - _editTime >= settings.PreviewDelay)
-            {
-                _worker.RequestPreview(_structure);
-                _previewRequested = _design.Version;
-            }
-        }
-
-        bool PreviewCurrent => _preview != null && _structure != null && _preview.Structure == _structure;
+        bool PreviewCurrent => _preview != null && _previewBridge == _bridge;
 
         void StartTest()
         {
-            _roads = BridgeEditing.ValidateRoads(_design);
-            if (!_roads.Ok)
+            if (!_bridge.Road.Ok)
             {
-                Flash(_roads.Message);
+                Flash(_bridge.Road.TooSteepFillIds.Count > 0
+                    ? "Part of the road is too steep for the car"
+                    : "No road yet: draw two flat lines side by side, from one end pad to the other");
                 Play(errorClip);
                 _roadWarningUntil = Time.time + 3f;
                 return;
             }
 
-            ResetToolState();
-            _runStructure = BridgeStructure.Compile(_design, Challenge);
-            _worker.StartRun(_runStructure);
+            ResetInput();
+            _runBridge = BridgeCompiler.Compile(_model.Copy(), _pads, Scale);
+            var config = Challenge.ToRunConfiguration(_start, _pads[_start.Start].Across, Scale);
+            _worker.StartRun(_runBridge, config, _floor);
             _snapshot = null;
-            _lastBroken = 0;
+            _lastLost = 0;
             _shownResult = RunResult.Running;
             _stars = 0;
-            _budgetFraction = Challenge.Budget > 0f ? _design.Cost / Challenge.Budget : 0f;
             _phase = Phase.Testing;
         }
 
@@ -212,19 +211,25 @@ namespace BridgeBuilder.Game
         void UpdateTesting()
         {
             var latest = _worker.Latest();
-            _snapshot = latest.Structure == _runStructure ? latest : null;
+            _snapshot = latest.Bridge == _runBridge ? latest : null;
 
             if (_snapshot != null)
             {
-                if (_snapshot.BrokenCount > _lastBroken)
+                if (_snapshot.MembersLost > _lastLost)
                 {
-                    _lastBroken = _snapshot.BrokenCount;
+                    _lastLost = _snapshot.MembersLost;
                     Play(breakClip);
                 }
                 if (_snapshot.Result != _shownResult)
                 {
                     _shownResult = _snapshot.Result;
-                    _stars = BridgeTestRun.StarsFor(_snapshot.Result, _snapshot.BrokenCount, _snapshot.PeakUtilization, _budgetFraction);
+                    var metrics = new RunMetrics
+                    {
+                        MembersLost = _snapshot.MembersLost,
+                        PeakUtilization = _snapshot.PeakUtilization,
+                        BudgetRemaining = _model.Remaining,
+                    };
+                    _stars = _shownResult == RunResult.Passed ? Scoring.Stars(metrics, StarPolicy) : 0;
                     Play(_shownResult == RunResult.Passed ? passClip : failClip);
                 }
             }
@@ -238,5 +243,8 @@ namespace BridgeBuilder.Game
                 _phase = Phase.Build;
             }
         }
+
+        /// <summary>Three-star thresholds. HG-stars has not set them, so these are the game's GUESS.</summary>
+        StarPolicy StarPolicy => new StarPolicy { MaxLostForThree = 0, MaxUtilForThree = 0.8, MinBudgetForThree = Challenge.Budget * 0.25 };
     }
 }

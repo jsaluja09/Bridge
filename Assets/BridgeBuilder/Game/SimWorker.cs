@@ -6,9 +6,9 @@ using BridgeBuilder.Core;
 namespace BridgeBuilder.Game
 {
     /// <summary>
-    /// Runs the solver and car on a background thread at a fixed rate (spec 2.12). The render thread
-    /// reads the newest snapshot; buffers are swapped under a short lock and reused, so steady-state
-    /// stepping allocates nothing. Also computes dead-load previews while the player builds.
+    /// Runs the bridge and car on a background thread at a fixed rate (spec 2.12), and the dead-load preview
+    /// (spec 2.10). The render thread takes the newest snapshot; three snapshot buffers are swapped under a short
+    /// lock and reused, so steady stepping allocates little. A newer preview request cancels an older one.
     /// </summary>
     public sealed class SimWorker : IDisposable
     {
@@ -16,20 +16,22 @@ namespace BridgeBuilder.Game
         readonly Thread _thread;
         volatile bool _alive = true;
 
-        BridgeStructure _pendingRun;
+        CompiledBridge _pendingRun;
+        RunConfiguration _pendingConfig;
+        double? _pendingFloor;
         bool _pendingStop;
-        BridgeStructure _pendingPreview;
+        CompiledBridge _pendingPreview;
+        volatile int _previewTicket;
 
-        Snapshot _back = new Snapshot(), _ready = new Snapshot(), _front = new Snapshot();
+        RunSnapshot _back = new RunSnapshot(), _ready = new RunSnapshot(), _front = new RunSnapshot();
         bool _hasNew;
-        PreviewResult _previewReady;
+        (CompiledBridge bridge, PreviewResult result) _previewReady;
 
-        /// <summary>Measured on the device: the spec's node-cap benchmark, live.</summary>
+        // The live solver benchmark (spec 2.12): measured on the headset.
         public volatile float StepMs;
         public volatile float StartMs;
         public volatile float PreviewMs;
-        public volatile int Equations;
-        public volatile int Bandwidth;
+        public volatile int Members;
         public volatile string Error;
 
         public SimWorker()
@@ -38,11 +40,13 @@ namespace BridgeBuilder.Game
             _thread.Start();
         }
 
-        public void StartRun(BridgeStructure structure)
+        public void StartRun(CompiledBridge bridge, RunConfiguration config, double floorRoomHeight)
         {
             lock (_lock)
             {
-                _pendingRun = structure;
+                _pendingRun = bridge;
+                _pendingConfig = config;
+                _pendingFloor = floorRoomHeight;
                 _pendingStop = false;
             }
         }
@@ -56,14 +60,17 @@ namespace BridgeBuilder.Game
             }
         }
 
-        public void RequestPreview(BridgeStructure structure)
+        public void RequestPreview(CompiledBridge bridge)
         {
             lock (_lock)
-                _pendingPreview = structure;
+            {
+                _pendingPreview = bridge;
+                _previewTicket++;
+            }
         }
 
-        /// <summary>The newest snapshot, or the last one if nothing new arrived.</summary>
-        public Snapshot Latest()
+        /// <summary>The newest run snapshot (Bridge is null until the run has started).</summary>
+        public RunSnapshot Latest()
         {
             lock (_lock)
             {
@@ -76,33 +83,39 @@ namespace BridgeBuilder.Game
             return _front;
         }
 
-        public PreviewResult TakePreview()
+        public bool TakePreview(out CompiledBridge bridge, out PreviewResult result)
         {
             lock (_lock)
             {
-                var p = _previewReady;
-                _previewReady = null;
-                return p;
+                (bridge, result) = _previewReady;
+                _previewReady = default;
             }
+            return result != null;
         }
 
         void Loop()
         {
-            BridgeTestRun run = null;
+            BridgeRun run = null;
             var clock = Stopwatch.StartNew();
             var timer = new Stopwatch();
-            double next = 0;
+            double next = 0, dt = 1.0 / Constants.Dynamics.SolverRateHz;
 
             while (_alive)
             {
-                BridgeStructure start, preview;
+                CompiledBridge start, preview;
+                RunConfiguration config;
+                double? floor;
                 bool stop;
+                int ticket;
                 lock (_lock)
                 {
                     start = _pendingRun;
+                    config = _pendingConfig;
+                    floor = _pendingFloor;
                     _pendingRun = null;
                     preview = _pendingPreview;
                     _pendingPreview = null;
+                    ticket = _previewTicket;
                     stop = _pendingStop;
                     _pendingStop = false;
                 }
@@ -115,10 +128,9 @@ namespace BridgeBuilder.Game
                     if (start != null)
                     {
                         timer.Restart();
-                        run = new BridgeTestRun(start);
+                        run = new BridgeRun(start, config, floor);
                         StartMs = (float)timer.Elapsed.TotalMilliseconds;
-                        Equations = run.Frame.Equations;
-                        Bandwidth = run.Frame.Bandwidth;
+                        Members = start.Input.Members.Count;
                         next = clock.Elapsed.TotalSeconds;
                         Publish(run);
                     }
@@ -126,23 +138,24 @@ namespace BridgeBuilder.Game
                     if (preview != null && run == null)
                     {
                         timer.Restart();
-                        var result = PreviewResult.Compute(preview);
+                        var result = DeadLoadPreview.Run(preview.Input, new BandedStaticSolver(), () => ticket != _previewTicket);
                         PreviewMs = (float)timer.Elapsed.TotalMilliseconds;
-                        lock (_lock)
-                            _previewReady = result;
+                        if (result.Status == PreviewStatus.Completed)
+                        {
+                            lock (_lock)
+                                _previewReady = (preview, result);
+                        }
                     }
 
                     if (run != null)
                     {
-                        double dt = run.Structure.Settings.FixedDt;
                         double now = clock.Elapsed.TotalSeconds;
                         int steps = 0;
                         while (now >= next && steps < 3)
                         {
                             timer.Restart();
-                            run.Step();
+                            run.Step(dt);
                             StepMs = (float)timer.Elapsed.TotalMilliseconds;
-                            Equations = run.Frame.Equations;
                             next += dt;
                             steps++;
                         }
@@ -150,6 +163,8 @@ namespace BridgeBuilder.Game
                             next = now;      // fell far behind (a hitch): don't try to catch up
                         if (steps > 0)
                             Publish(run);
+                        if (run.Result != RunResult.Running && run.Time > 30)
+                            run = null;      // the collapse has played out
                     }
                 }
                 catch (Exception e)
@@ -163,7 +178,7 @@ namespace BridgeBuilder.Game
             }
         }
 
-        void Publish(BridgeTestRun run)
+        void Publish(BridgeRun run)
         {
             run.Write(_back);
             lock (_lock)

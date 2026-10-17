@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace BridgeBuilder.Game
 {
-    /// <summary>Text panels, the tool label on the controller, and sound (including the load creak, spec 2.10).</summary>
+    /// <summary>The text panel, written for students, and sound (including the load creak, spec 2.10).</summary>
     public sealed partial class BridgeGame
     {
         [Header("Feedback")]
@@ -16,10 +16,10 @@ namespace BridgeBuilder.Game
         [Tooltip("Looped while testing; pitch and volume rise as the worst member nears failure.")]
         [SerializeField] AudioClip creakClip;
         [SerializeField] float hudFontSize = 0.22f;
+        [Tooltip("Show solver timing: the headset benchmark for the node cap (spec 2.12).")]
         [SerializeField] bool showSolverStats = true;
 
         TextMeshPro _hud;
-        TextMeshPro _toolLabel;
         AudioSource _sfx;
         AudioSource _creak;
         string _flash;
@@ -27,8 +27,11 @@ namespace BridgeBuilder.Game
 
         void CreateFeedback()
         {
-            _hud = CreateText("HUD", new Vector2(1.6f, 0.6f));
-            _toolLabel = CreateText("Tool Label", new Vector2(0.4f, 0.1f));
+            var go = new GameObject("HUD");
+            go.transform.SetParent(transform, false);
+            _hud = go.AddComponent<TextMeshPro>();
+            _hud.alignment = TextAlignmentOptions.Center;
+            _hud.rectTransform.sizeDelta = new Vector2(1.6f, 0.6f);
             _sfx = gameObject.AddComponent<AudioSource>();
             _sfx.playOnAwake = false;
             _creak = gameObject.AddComponent<AudioSource>();
@@ -37,20 +40,10 @@ namespace BridgeBuilder.Game
             _creak.volume = 0f;
         }
 
-        TextMeshPro CreateText(string name, Vector2 size)
-        {
-            var go = new GameObject(name);
-            go.transform.SetParent(transform, false);
-            var text = go.AddComponent<TextMeshPro>();
-            text.alignment = TextAlignmentOptions.Center;
-            text.rectTransform.sizeDelta = size;
-            return text;
-        }
-
         void Flash(string message)
         {
             _flash = message;
-            _flashUntil = Time.time + 2f;
+            _flashUntil = Time.time + 2.5f;
         }
 
         void Play(AudioClip clip)
@@ -68,7 +61,9 @@ namespace BridgeBuilder.Game
             string text = _phase switch
             {
                 Phase.Brief => BriefText(),
-                Phase.MarkSurfaces => MarkText(),
+                Phase.Place => _taps.Count == 0
+                    ? "Touch the spot where the bridge STARTS\nand pull the trigger"
+                    : "Now touch where the bridge ENDS\n<size=70%>X: undo</size>",
                 Phase.Build => BuildText(),
                 _ => TestText(),
             };
@@ -81,73 +76,30 @@ namespace BridgeBuilder.Game
 
             Vector3 anchor;
             if (_phase == Phase.Build || _phase == Phase.Testing)
-            {
-                Vector3 mid = (V(_design.Surfaces[0].Mid) + V(_design.Surfaces[1].Mid)) * 0.5f;
-                anchor = mid + Vector3.up * 0.45f;
-            }
+                anchor = (V(_pads[0].FrontCenter) + V(_pads[1].FrontCenter)) * 0.5f + Vector3.up * 0.45f;
             else
-            {
-                Vector3 forward = Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up).normalized;
-                anchor = cam.transform.position + forward * 0.8f - Vector3.up * 0.1f;
-            }
-            Face(_hud.transform, anchor, cam);
-
-            bool showTool = _phase == Phase.Build;
-            _toolLabel.gameObject.SetActive(showTool);
-            if (showTool)
-            {
-                string label = ToolNames[(int)_tool] + (_symmetry ? "  [mirror]" : "");
-                if (_tool == Tool.Fill && _fillCorners.Count > 0)
-                    label += $"  {_fillCorners.Count} corners";
-                _toolLabel.text = label;
-                _toolLabel.fontSize = hudFontSize * 0.6f;
-                Face(_toolLabel.transform, _pointer.Tip + Vector3.up * 0.05f, cam);
-            }
-        }
-
-        static void Face(Transform t, Vector3 position, Camera cam)
-        {
-            t.position = position;
-            t.rotation = Quaternion.LookRotation(position - cam.transform.position, Vector3.up);
+                anchor = cam.transform.position + Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up).normalized * 0.8f - Vector3.up * 0.1f;
+            _hud.transform.position = anchor;
+            _hud.transform.rotation = Quaternion.LookRotation(anchor - cam.transform.position, Vector3.up);
         }
 
         string BriefText()
         {
             var c = Challenge;
-            string wind = c.WindSpeed > 0f ? $"{c.WindSpeed:F0} m/s crosswind" : "calm";
-            return $"<b>{c.Name}</b>  ({_challengeIndex + 1}/{challenges.Length})\n{c.Description}\n" +
-                   $"Vehicle {c.CarMass / 1000f:F1} t  ·  Wind {wind}  ·  Grip {c.Grip:F1}  ·  Budget {c.Budget:F0}\n" +
-                   "<size=70%>Stick: choose challenge   ·   A: start</size>";
-        }
-
-        string MarkText()
-        {
-            string[] steps =
-            {
-                "Touch one end of the START surface's edge facing the gap, and pull the trigger",
-                "Now the other end of that edge",
-                "Touch one end of the FAR surface's edge",
-                "Now the other end of that edge",
-            };
-            return steps[Mathf.Min(_taps.Count, 3)] + "\n<size=70%>X: undo a tap</size>";
+            string wind = c.WindSpeed > 0 ? $"{c.WindSpeed:F0} m/s wind" : "no wind";
+            return $"<b>{c.Name}</b>  ({_challengeIndex + 1}/{_challenges.Length})\n{c.Brief}\n" +
+                   $"Vehicle {c.CarWeightKg / 1000:F1} t  ·  {wind}  ·  Material {c.Budget:F0} m\n" +
+                   "<size=70%>Stick: choose   ·   A: start</size>";
         }
 
         string BuildText()
         {
-            float cost = _design.Cost;
-            string budget = $"Budget {cost:F0} / {Challenge.Budget:F0}";
-            string hint = _tool switch
-            {
-                Tool.Draw => "Hold the trigger on a dot and draw: a line, an arc, or straight zigzags",
-                Tool.Fill => "Tap the corners of a closed, flat shape, then the first corner again",
-                Tool.Road => "Touch a fill to flag it as road (the car drives on road fills only)",
-                _ => "Touch a line or fill and pull the trigger to delete it",
-            };
-            string road = _roads == null ? "" : _roads.Ok ? "Road: ready" : $"Road: {_roads.Message}";
-            string text = $"{budget}   ·   {road}\n{hint}\n" +
-                          "<size=70%>Stick: tool · Stick click: mirror · A: test · B: undo · X: clear · Y: car's side</size>";
+            string material = $"Material {_model.Spent:F1} / {Challenge.Budget:F0} m";
+            string road = _bridge.Road.Ok ? "<color=#5CE65C>Road ready</color>" : "Road: draw two flat lines side by side, pad to pad";
+            string text = $"{material}   ·   {road}\n" +
+                          "<size=70%>Hold trigger: draw   ·   Grip on a line: delete   ·   A: test   ·   B: undo   ·   X: clear   ·   Y: swap start</size>";
             if (PreviewCurrent)
-                text += "\n<size=60%>Colors show load under the bridge's own weight</size>";
+                text += "\n<size=60%>Colors show how hard the bridge works to hold itself up</size>";
             return text + SolverStats();
         }
 
@@ -157,37 +109,39 @@ namespace BridgeBuilder.Game
             if (snap == null)
                 return "Starting...";
             if (snap.Result == RunResult.Running)
-                return $"Testing...  members broken {snap.BrokenCount}  ·  worst load {Mathf.RoundToInt(snap.WorstUtilization * 100f)}%" + SolverStats();
+                return $"Testing...   worst load {Mathf.RoundToInt((float)snap.WorstUtilization * 100)}%" +
+                       (snap.Lesson.Length > 0 ? $"\n<color=#FFD24A>{snap.Lesson}</color>" : "") + SolverStats();
 
-            string stars = snap.Result == RunResult.Passed ? $"  {new string('*', _stars)}{new string('-', 3 - _stars)}" : "";
-            string verdict = snap.Result == RunResult.Passed ? "<color=#5CE65C>PASS</color>" : "<color=#FF5050>FAIL</color>";
-            return $"{verdict}{stars}  {snap.Message}\n" +
-                   $"Members broken: {snap.BrokenCount}   ·   Peak load: {Mathf.RoundToInt(snap.PeakUtilization * 100f)}%\n" +
+            bool pass = snap.Result == RunResult.Passed;
+            string verdict = pass ? "<color=#5CE65C>PASS</color>" : "<color=#FF5050>FAIL</color>";
+            string stars = pass && _stars == 3 ? "  <color=#FFD24A>3 stars!</color>" : "";
+            string lesson = snap.Lesson.Length > 0 ? $"\n<color=#FFD24A>{snap.Lesson}</color>" : "";
+            return $"{verdict}{stars}  {snap.Message}{lesson}\n" +
+                   $"Members broken: {snap.MembersLost}   ·   Highest load: {Mathf.RoundToInt((float)snap.PeakUtilization * 100)}%\n" +
                    "<size=70%>A: back to building</size>" + SolverStats();
         }
 
-        /// <summary>Live solver timing: the spec's node-cap benchmark, measured on the headset.</summary>
         string SolverStats()
         {
             if (!showSolverStats)
                 return "";
-            return $"\n<size=50%><color=#9A9A9A>{_worker.Equations} equations · band {_worker.Bandwidth} · " +
-                   $"step {_worker.StepMs:F2} ms · start {_worker.StartMs:F0} ms · preview {_worker.PreviewMs:F0} ms</color></size>";
+            return $"\n<size=45%><color=#9A9A9A>{_worker.Members} members · step {_worker.StepMs:F2} ms · start {_worker.StartMs:F0} ms · preview {_worker.PreviewMs:F0} ms</color></size>";
         }
 
         void UpdateAudio()
         {
             if (creakClip == null)
                 return;
-            float worst = _phase == Phase.Testing && _snapshot != null && _snapshot.Result == RunResult.Running ? _snapshot.WorstUtilization : 0f;
-            float volume = Mathf.Clamp01((worst - 0.6f) / 0.4f);
+            double worst = _phase == Phase.Testing && _snapshot != null && _snapshot.Result == RunResult.Running ? _snapshot.WorstUtilization : 0;
+            float volume = Mathf.Clamp01((float)(worst - 0.6) / 0.4f);
             if (volume > 0f && !_creak.isPlaying)
             {
                 _creak.clip = creakClip;
                 _creak.Play();
             }
             _creak.volume = volume;
-            _creak.pitch = 0.8f + 0.6f * Mathf.Clamp01(worst);
+            // Spec 2.10: pitch rises as the worst member nears failure (80 to 400 Hz mapped onto playback rate).
+            _creak.pitch = (float)(FeedbackMapping.CreakPitch(worst) / Constants.Feedback.CreakPitchMinHz) * 0.5f;
         }
     }
 }

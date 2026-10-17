@@ -1,56 +1,59 @@
-# BridgeBuilder MR: setup and controls
+# BridgeBuilder MR: setup and how to play
 
-## Quick start: just build and run
+## Build and run
 
-`SampleScene` works as-is. On start, `BridgeBootstrap` hides the template's demo objects and adds the game,
-and passthrough is forced on. Plug in the Quest, then **File → Build And Run** (Meta Quest or Android profile;
-minimum API level 32 is set automatically for Quest 2).
+`SampleScene` works as-is: on start, `BridgeBootstrap` hides the template's demo objects, adds the game,
+and turns on passthrough. Plug in the Quest, then **File → Build And Run**. (Minimum API level 32 for
+Quest 2 is set automatically.)
 
-## How a round works
+## How to play (for students)
 
-1. **Brief.** Pick a challenge with the right stick (car weight, wind, grip, budget). A to start.
-2. **Mark the surfaces: four taps.** Touch both ends of the start surface's edge that faces the gap, then both
-   ends of the far surface's edge. Snap dots (fixed supports) appear along each edge, and ground dots appear
-   on the floor under the gap for piers.
-3. **Build.** Lines must start on a dot. Draw freehand: straight lines, arcs, and zigzags are recognized and
-   cut into ~10 cm pieces. Every piece ends in a new dot you can build from.
-4. **Deck.** Use the **Fill** tool to tap the corners of a flat shape (e.g. the two bottom chords and the
-   surface edges), then the **Road** tool to flag it as road. The car only drives on road fills.
-5. **Test.** A. The bridge settles under its own weight, then the car drives across. Members go green → yellow
-   → red with load (stripes get denser too), pulse above 90%, and break past 100%. Pieces that come loose
-   fall onto the floor and tables.
+1. **Pick a challenge.** Push the right stick left/right, then press **A**.
+2. **Place the two ends.** Touch where the bridge starts and pull the trigger, then where it ends.
+   Two orange pads appear. The car parks on the start pad.
+3. **Draw.** Hold the trigger and draw in the air; let go to finish the line. Lines can start anywhere.
+   They snap together where they touch, and they stick to the pads (and to the floor dots, for piers).
+4. **Make a road.** Two flat lines side by side, from one pad to the other, automatically get a road
+   between them.
+5. **Test.** Press **A**. The car drives across. Members turn green → yellow → red as they work harder,
+   pulse when close to breaking, and snap past 100%. A red dot marks where something broke, and the panel
+   says why, in plain words.
 
-While you build, the bridge is colored by the load from its own weight (a dead-load preview); magenta
-means a piece isn't connected to any support.
-
-## Controls
+While building, colors show how hard the bridge works just to hold itself up. Purple means a piece
+isn't attached to anything and will fall.
 
 | Button | Does |
 |---|---|
-| Right trigger | Use the current tool |
-| Right stick left/right | Change tool: Draw, Fill, Road, Delete |
-| Right stick click | Symmetry: mirror every line across the road's centerline |
-| A | Test / back to building (brief: start) |
-| B | Undo (Fill tool: remove the last corner) |
-| X (left) | Clear the bridge (press twice); with nothing built, back to the brief |
-| Y (left) | Swap which surface the car starts from |
+| Right trigger (hold) | Draw a line |
+| Right grip | Delete the line you're touching |
+| A | Test / back to building |
+| B | Undo |
+| X (left) | Clear the bridge (press twice); with nothing built, back to the challenge list |
+| Y (left) | Swap which pad the car starts on |
 
-Keyboard over Link: Space = A, Backspace = B, R = X, Y = Y, M = stick click, arrows = tool.
+Keyboard over Link: Space = A, Backspace = B, Delete = grip, R = X, Y = Y, arrows = stick.
 
 ## Optional polish (Bridge Game component)
 
-- **Car View → Car Prefab:** a free car model, e.g. Kenney's Car Kit (https://kenney.nl/assets/car-kit,
-  CC0). Record each asset and its license in the team's asset list (spec §1). Set **Yaw Offset** if it drives
-  sideways.
-- **Sounds:** `MRTemplateAssets/Audio/ButtonClick.wav` (snap), `ButtonHover.wav` (error), `Goal.wav` (pass).
-  A creak loop (e.g. a CC0 clip from freesound.org) on **Creak Clip** rises in pitch as members near failure.
+- **Car View → Car Prefab:** a free, license-checked car model, e.g. Kenney's Car Kit
+  (https://kenney.nl/assets/car-kit, CC0). Record it in the team's asset list (spec §1). Set **Yaw Offset**
+  if it drives sideways.
+- **Sounds:** `MRTemplateAssets/Audio/ButtonClick.wav` (snap), `ButtonHover.wav` (error), `Goal.wav` (pass),
+  and a CC0 creak loop on **Creak Clip**.
 - **Controller Pointer → Tip Offset** if the cursor dot isn't at the controller's tip.
 
-## Tuning
+## For developers
 
-Everything is on **Bridge Game → Settings**. Material and section were calibrated by the tests so a bare deck
-fails under the standard car and a simple truss holds it; after changing them, run
-**Window → General → Test Runner → EditMode → Run All**.
+The physics is the `BridgeBuilder.Core` library in `Assets/BridgeBuilder.Core` (no Unity code). It is built
+and tested outside Unity:
 
-The grey line at the bottom of the panel is the live solver benchmark (spec §2.12): equations, matrix band,
-milliseconds per step, and the time to start a test. Use it to set **Node Cap** on the headset.
+```bash
+dotnet test tests/BridgeBuilder.Core.Tests/BridgeBuilder.Core.Tests.csproj
+```
+
+Work is split into the GitHub issues (waves W0–W3); see `AGENTS.md`. Tuning values live in
+`Constants.*.cs`, each tagged GUESS, DERIVED or HUMAN_OWNED. The spec is `docs/spec.md`; section 11 records
+the playtest changes (free drawing, pads, automatic decks).
+
+The grey line at the bottom of the panel is the live solver benchmark (spec §2.12): members, milliseconds per
+step, time to start a test, and preview time. Use it on the headset to confirm the node cap.
