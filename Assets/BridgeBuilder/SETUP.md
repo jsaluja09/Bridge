@@ -1,6 +1,14 @@
 # BridgeBuilder MR: setup (hackathon build)
 
-## Scene (about 10 minutes)
+## Quick start: just build and run
+
+`SampleScene` works as-is. On start, `BridgeBootstrap` hides the template's demo objects and adds the game
+(a placeholder box car, no sounds). Use **File → Build And Run** with the Quest connected over USB.
+
+## Proper scene (optional, about 10 minutes)
+
+Do this to add a real car model, sounds or materials. Once a Bridge Game component is in the scene,
+the bootstrap steps aside.
 
 1. Open `Assets/Scenes/SampleScene` and save a copy as `Assets/Scenes/Bridge` so the template stays intact.
 2. Turn off the template's demo objects in the Hierarchy (untick each one):
