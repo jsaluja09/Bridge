@@ -305,13 +305,13 @@ namespace BridgeBuilder.Core.Tests
         [Fact]
         public void HumanConstantsHaveIssueValues()
         {
-            Assert.Equal(1.0, Constants.Human.Fixture1MinimumUtilization);
-            Assert.Equal(1.0, Constants.Human.Fixture5MaximumUtilization);
+            Assert.Equal(1.6, Constants.Human.Fixture1MinimumUtilization);
+            Assert.Equal(0.5, Constants.Human.Fixture5MaximumUtilization);
             Assert.Equal(150, Constants.Human.NodeCap);
             Assert.Equal(2.0e11, Constants.Human.YoungsModulus);
             Assert.Equal(7.692307692307693e10, Constants.Human.ShearModulus);
             Assert.Equal(7850.0, Constants.Human.Density);
-            Assert.Equal(1.0e-6, Constants.Human.TorsionConstant);
+            Assert.Equal(1.71e-5, Constants.Human.TorsionConstant);
             Assert.Equal(1500.0, Constants.Human.CarMassKg);
             Assert.Equal(0.25, Constants.Human.ReachTolerance);
 
