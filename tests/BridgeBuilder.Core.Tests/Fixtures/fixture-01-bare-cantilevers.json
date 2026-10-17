@@ -1,7 +1,8 @@
 {
   "name": "Fixture 1: two bare cantilevers",
-  "note": "Stub: geometry only (room units, Y up), with no loads, sections, or expected answers. One line from each marked surface ends in a free tip, and nothing joins the two tips. The issue that owns this file replaces the stub and deletes \"stub\": true, which ends the stub-only checks in ScaffoldTests.",
-  "stub": true,
+  "note": "Spec 5 fixture 1, issue W2-07. Two lines from the two marked surfaces and nothing else: line 1 runs from surface 1 to free tip node 2, line 2 from surface 2 to free tip node 4, and nothing joins the tips. Each line is 0.4 room units, an 8 m cantilever at the 20x scale.",
+  "description": "Positions are room units (Y up) and go through the scale adapter at Constants.Scale.RoomToBridge. Lines are stored as drawn, vertex to vertex; FixtureCalibrationTests divides each one the way the game does, with EqualSegments.SnapPolyline at Constants.Snapping.TargetSpacingMeters, which keeps these node ids. One static solve carries Constants.Human.CarMassKg * Constants.Loads.Gravity downward in bridge-world, split equally across tipNodeIds. Every member uses the Constants.Section tube with the Constants.Human material, so the file holds no section. The worst-member utilization must be at least Constants.Human.Fixture1MinimumUtilization.",
+  "tipNodeIds": [2, 4],
   "nodes": [
     { "id": 1, "position": [0.0, 1.0, 0.0], "fixed": true, "surfaceId": 1 },
     { "id": 2, "position": [0.4, 1.0, 0.0], "fixed": false },
