@@ -1,0 +1,27 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BridgeBuilder.Core", "BridgeBuilder.Core\BridgeBuilder.Core.csproj", "{2BE5891F-4D52-439E-A2B1-426905ABAA3C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BridgeBuilder.Core.Tests", "BridgeBuilder.Core.Tests\BridgeBuilder.Core.Tests.csproj", "{10F4D959-F822-4995-BB6F-8B8F7F165F9C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2BE5891F-4D52-439E-A2B1-426905ABAA3C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2BE5891F-4D52-439E-A2B1-426905ABAA3C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2BE5891F-4D52-439E-A2B1-426905ABAA3C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2BE5891F-4D52-439E-A2B1-426905ABAA3C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{10F4D959-F822-4995-BB6F-8B8F7F165F9C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{10F4D959-F822-4995-BB6F-8B8F7F165F9C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{10F4D959-F822-4995-BB6F-8B8F7F165F9C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{10F4D959-F822-4995-BB6F-8B8F7F165F9C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
