@@ -1,7 +1,7 @@
 {
   "name": "Fixture 3: unbraced rectangle",
-  "note": "Stub: geometry only (room units, Y up), with no loads, sections, or expected answers. Four edge members form a 2 by 1 rectangle with its two bottom corners fixed and no diagonal. The issue that owns this file replaces the stub and deletes \"stub\": true, which ends the stub-only checks in ScaffoldTests.",
-  "stub": true,
+  "note": "do not modify without human approval",
+  "description": "Issue W1-01. Four edge members form a 2 by 1 rectangle in the XY plane with rigid joints and the two bottom corners fixed. The load is 1000 N in global +X at node 3 (2, 1, 0). The brace block adds the diagonal from node 1 (0, 0, 0) to node 3 (2, 1, 0) for the braced comparison, which must cut the loaded-node translation by at least minimumRelativeStiffening. Positions are solver lengths in meters, and tests use scale factor 1. Section values are fixture-local, not game constants.",
   "nodes": [
     { "id": 1, "position": [0.0, 0.0, 0.0], "fixed": true },
     { "id": 2, "position": [2.0, 0.0, 0.0], "fixed": true },
@@ -9,12 +9,22 @@
     { "id": 4, "position": [0.0, 1.0, 0.0], "fixed": false }
   ],
   "members": [
-    { "id": 1, "nodeA": 1, "nodeB": 2, "lineId": 1 },
-    { "id": 2, "nodeA": 2, "nodeB": 3, "lineId": 1 },
-    { "id": 3, "nodeA": 3, "nodeB": 4, "lineId": 1 },
-    { "id": 4, "nodeA": 4, "nodeB": 1, "lineId": 1 }
+    { "id": 1, "nodeA": 1, "nodeB": 2, "sectionId": 1, "lineId": 1 },
+    { "id": 2, "nodeA": 2, "nodeB": 3, "sectionId": 1, "lineId": 1 },
+    { "id": 3, "nodeA": 3, "nodeB": 4, "sectionId": 1, "lineId": 1 },
+    { "id": 4, "nodeA": 4, "nodeB": 1, "sectionId": 1, "lineId": 1 }
   ],
   "lines": [
     { "id": 1, "memberIds": [1, 2, 3, 4] }
-  ]
+  ],
+  "sections": [
+    { "id": 1, "e": 2.0e11, "g": 1.0e11, "a": 1.0e-3, "iy": 1.0e-5, "iz": 1.0e-5, "j": 1.0e-6 }
+  ],
+  "loads": [ { "nodeId": 3, "force": [1000.0, 0.0, 0.0] } ],
+  "loadedNodeId": 3,
+  "brace": {
+    "members": [ { "id": 5, "nodeA": 1, "nodeB": 3, "sectionId": 1, "lineId": 2 } ],
+    "lines": [ { "id": 2, "memberIds": [5] } ]
+  },
+  "minimumRelativeStiffening": 1.0e-3
 }
