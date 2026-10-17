@@ -1,21 +1,29 @@
 {
   "name": "Fixture 6: progressive failure",
-  "note": "Stub: geometry only (room units, Y up), with no loads, sections, or expected answers. Three members run from three fixed surface nodes to one shared free node, so removing any one leaves a standing structure. The issue that owns this file replaces the stub and deletes \"stub\": true, which ends the stub-only checks in ScaffoldTests.",
-  "stub": true,
+  "note": "Issue W2-01. A redundant two-member frame: members 1 and 3 run from the two surface supports to the free joint node 4 and are mirror images, so they have equal length, stiffness, and mass and carry equal moments while both stand. Their sections differ only in yield strength, so member 1 reaches utilization 1 first. Once it is removed, member 3 holds the load alone as a cantilever.",
+  "description": "Positions are room units (Y up) and go through the scale adapter at scaleFactor. The load is bridge-world newtons, applied suddenly on the first step and held for stepCount steps of dt seconds (one step at 60 Hz) with the default damping ratio. Section values are fixture-local, not game constants: the yield strengths are chosen so member 1 fails within the first half period while member 3 stays below utilization 1 after carrying the whole load.",
+  "scaleFactor": 20.0,
+  "dt": 0.016666666666666666,
+  "stepCount": 120,
+  "firstFailingMemberId": 1,
+  "loads": [
+    { "nodeId": 4, "force": [0.0, -1400.0, 0.0] }
+  ],
   "nodes": [
     { "id": 1, "position": [0.0, 1.0, 0.0], "fixed": true, "surfaceId": 1 },
-    { "id": 2, "position": [0.0, 1.0, 0.2], "fixed": true, "surfaceId": 1 },
     { "id": 3, "position": [1.0, 1.0, 0.0], "fixed": true, "surfaceId": 2 },
-    { "id": 4, "position": [0.5, 1.0, 0.1], "fixed": false }
+    { "id": 4, "position": [0.5, 1.0, 0.0], "fixed": false }
   ],
   "members": [
-    { "id": 1, "nodeA": 1, "nodeB": 4, "lineId": 1 },
-    { "id": 2, "nodeA": 2, "nodeB": 4, "lineId": 2 },
-    { "id": 3, "nodeA": 3, "nodeB": 4, "lineId": 3 }
+    { "id": 1, "nodeA": 1, "nodeB": 4, "sectionId": 1, "lineId": 1 },
+    { "id": 3, "nodeA": 4, "nodeB": 3, "sectionId": 2, "lineId": 3 }
   ],
   "lines": [
     { "id": 1, "memberIds": [1] },
-    { "id": 2, "memberIds": [2] },
     { "id": 3, "memberIds": [3] }
+  ],
+  "sections": [
+    { "id": 1, "e": 2.0e11, "g": 7.692307692307693e10, "a": 1.0e-3, "iy": 1.0e-5, "iz": 1.0e-5, "j": 1.5e-5, "yieldStrength": 3.5e7, "density": 7850.0, "cy": 0.075, "cz": 0.075 },
+    { "id": 2, "e": 2.0e11, "g": 7.692307692307693e10, "a": 1.0e-3, "iy": 1.0e-5, "iz": 1.0e-5, "j": 1.5e-5, "yieldStrength": 3.55e8, "density": 7850.0, "cy": 0.075, "cz": 0.075 }
   ]
 }
