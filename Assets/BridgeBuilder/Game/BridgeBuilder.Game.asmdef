@@ -1,0 +1,19 @@
+{
+    "name": "BridgeBuilder.Game",
+    "rootNamespace": "BridgeBuilder.Game",
+    "references": [
+        "BridgeBuilder.Core",
+        "Unity.InputSystem",
+        "Unity.TextMeshPro",
+        "Unity.XR.ARFoundation"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
