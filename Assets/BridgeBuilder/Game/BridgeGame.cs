@@ -13,6 +13,8 @@ namespace BridgeBuilder.Game
     public sealed class BridgeGame : MonoBehaviour
     {
         [SerializeField] BridgeSettings settings = new BridgeSettings();
+        [Tooltip("Show the real room behind the game (Quest passthrough).")]
+        [SerializeField] bool passthrough = true;
 
         [Header("Feedback")]
         [SerializeField] AudioClip snapClip;
@@ -67,6 +69,12 @@ namespace BridgeBuilder.Game
             _status = text.AddComponent<TextMeshPro>();
             _status.alignment = TextAlignmentOptions.Center;
             _status.rectTransform.sizeDelta = new Vector2(2f, 0.5f);
+        }
+
+        void Start()
+        {
+            if (passthrough)
+                Passthrough.Enable();
         }
 
         void Update()
