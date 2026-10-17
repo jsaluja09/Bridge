@@ -1,0 +1,20 @@
+{
+  "name": "Fixture 7: pier to ground plane",
+  "note": "Stub: geometry only (room units, Y up), with no loads, sections, or expected answers. Line 1 is a deck between two surfaces at height 2. Line 2 is one vertical pier of length 2 from a fixed ground anchor at floor height 0 up to the deck midpoint. The issue that owns this file replaces the stub and deletes \"stub\": true, which ends the stub-only checks in ScaffoldTests.",
+  "stub": true,
+  "nodes": [
+    { "id": 1, "position": [0.0, 2.0, 0.0], "fixed": true, "surfaceId": 1 },
+    { "id": 2, "position": [0.5, 2.0, 0.0], "fixed": false },
+    { "id": 3, "position": [1.0, 2.0, 0.0], "fixed": true, "surfaceId": 2 },
+    { "id": 4, "position": [0.5, 0.0, 0.0], "fixed": true, "groundAnchor": true }
+  ],
+  "members": [
+    { "id": 1, "nodeA": 1, "nodeB": 2, "lineId": 1 },
+    { "id": 2, "nodeA": 2, "nodeB": 3, "lineId": 1 },
+    { "id": 3, "nodeA": 4, "nodeB": 2, "lineId": 2 }
+  ],
+  "lines": [
+    { "id": 1, "memberIds": [1, 2] },
+    { "id": 2, "memberIds": [3] }
+  ]
+}

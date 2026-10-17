@@ -1,6 +1,6 @@
 {
     "name": "BridgeBuilder.Core",
-    "rootNamespace": "BridgeBuilder",
+    "rootNamespace": "BridgeBuilder.Core",
     "references": [],
     "includePlatforms": [],
     "excludePlatforms": [],
