@@ -8,7 +8,8 @@ namespace BridgeBuilder.Game
     /// <summary>
     /// What a stroke turns into (W4-04). While the trigger is held, a ghost shows the shape the stroke resolves to
     /// (W4-01), already snapped parallel to its partner rail if it has one (W4-02). On release the resolved shape
-    /// is built, not the raw stroke; a stroke that fits no shape flashes red and fades. No HUD text here.
+    /// is built, not the raw stroke; a stroke that fits no shape becomes a straight beam between its ends, and
+    /// only one too short to be a beam flashes red and fades. No HUD text here.
     /// </summary>
     public sealed class StrokeFeedback
     {
@@ -45,7 +46,7 @@ namespace BridgeBuilder.Game
 
         /// <summary>
         /// The finished stroke as straight or curved pieces ready for FreeDraw: one piece for a line or an arc,
-        /// one per side of a polyline so every corner lands exactly. Null if the stroke fits no shape.
+        /// one per side of a polyline so every corner lands exactly. Null only if the stroke is too short for a beam.
         /// </summary>
         public static List<List<Vec3>> Pieces(List<Vector3> stroke, BridgeModel model)
         {
@@ -60,7 +61,7 @@ namespace BridgeBuilder.Game
         static ResolvedShape Resolve(List<Vector3> stroke, BridgeModel model, out int partner)
         {
             partner = -1;
-            var shape = ShapeResolver.Resolve(stroke.Select(v => v.ToCore()).ToList());
+            var shape = ShapeResolver.ResolveOrStraighten(stroke.Select(v => v.ToCore()).ToList());
             if (!shape.Valid)
                 return null;
             var snapped = ParallelAssist.Snap(shape, model);

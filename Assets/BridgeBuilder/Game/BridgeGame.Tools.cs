@@ -127,7 +127,8 @@ namespace BridgeBuilder.Game
 
         /// <summary>
         /// Builds the resolved shape (W4-04), not the raw stroke: one piece for a line or arc, one per side of a
-        /// polyline so its corners land exactly. A stroke that fits no shape flashes red with no message.
+        /// polyline so its corners land exactly. A stroke that fits no shape is built as a straight beam; one too
+        /// short for a beam flashes red with no message.
         /// </summary>
         void FinishStroke()
         {

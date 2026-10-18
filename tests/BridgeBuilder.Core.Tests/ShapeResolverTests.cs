@@ -122,19 +122,25 @@ namespace BridgeBuilder.Core.Tests
             AssertFinite(s);
         }
 
-        [Fact]
-        public void Scribble_IsInvalid()
+        /// <summary>A random walk in the plane z = 0 from start: no shape fits it.</summary>
+        internal static List<Vec3> Scribble(int seed, Vec3 start, int steps = 400)
         {
-            var rng = new Random(7);
-            var pts = new List<Vec3> { P(0.3, 1, 0) };
+            var rng = new Random(seed);
+            var pts = new List<Vec3> { start };
             Vec3 heading = Vec3.UnitX;
-            for (int i = 0; i < 400; i++)
+            for (int i = 0; i < steps; i++)
             {
                 double turn = (rng.NextDouble() - 0.5) * 2.5;
                 heading = new Vec3(heading.X * Math.Cos(turn) - heading.Y * Math.Sin(turn), heading.X * Math.Sin(turn) + heading.Y * Math.Cos(turn), 0);
                 pts.Add(pts[pts.Count - 1] + heading * 0.006);
             }
-            var s = ShapeResolver.Resolve(pts);
+            return pts;
+        }
+
+        [Fact]
+        public void Scribble_IsInvalid()
+        {
+            var s = ShapeResolver.Resolve(Scribble(7, P(0.3, 1, 0)));
             Assert.Equal(ResolvedKind.Invalid, s.Kind);
             Assert.Contains(s.Reason, new[] { InvalidReason.SelfIntersecting, InvalidReason.TooNoisy });
             Assert.True(double.IsFinite(s.Residual));
