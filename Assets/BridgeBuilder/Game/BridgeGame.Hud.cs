@@ -109,7 +109,7 @@ namespace BridgeBuilder.Game
 
             bool pass = snap.Result == RunResult.Passed;
             string verdict = pass ? "<color=#5CE65C>PASS</color>" : "<color=#FF5050>FAIL</color>";
-            string stars = pass && _stars == 3 ? "  <color=#FFD24A>3 stars!</color>" : "";
+            string stars = pass && _stars > 0 ? $"  <color=#FFD24A>{_stars} of 3 stars{(_stars == 3 ? "!" : "")}</color>" : "";
             // Keep the summary on the result panel once the HUD message has gone.
             var summary = _fx.Summary;
             string lesson = summary != null && HudMessages.Current != summary.Text ? $"\n<color=#FFD24A>{summary.Text}</color>" : "";

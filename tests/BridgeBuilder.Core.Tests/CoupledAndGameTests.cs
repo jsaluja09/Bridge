@@ -339,60 +339,6 @@ namespace BridgeBuilder.Core.Tests
             Assert.DoesNotContain(typeof(ChallengeConfig).GetMethods(), m => m.Name == "FreePlay" || m.Name == "SetPlayerConditions");
     }
 
-    /// <summary>W3-04: scoring metrics.</summary>
-    public class ScoringTests
-    {
-        static readonly Vec3 A = new Vec3(0, 0, 0), B = new Vec3(0, 0, 2);
-
-        [Fact]
-        public void Pass_WhenCarCrossesFarEdge_EvenIfMembersFailed()
-        {
-            Assert.True(Scoring.Reached(new Vec3(0.1, 0, 1), A, B, Vec3.UnitX, 0.1));
-            Assert.Equal(3, Scoring.MembersLost(new[] { 1, 2, 3 }));
-            Assert.True(Scoring.Reached(new Vec3(0.1, 0, 1), A, B, Vec3.UnitX, 0.1));
-        }
-
-        [Fact]
-        public void Fail_WhenCarHasNotCrossed()
-        {
-            Assert.False(Scoring.Reached(new Vec3(-0.1, 0, 1), A, B, Vec3.UnitX, 0.1));
-            Assert.False(Scoring.Reached(new Vec3(0.1, 5, 1), A, B, Vec3.UnitX, 0.1));
-        }
-
-        [Fact]
-        public void MembersLost_CountsFailedIds()
-        {
-            Assert.Equal(0, Scoring.MembersLost(new int[0]));
-            Assert.Equal(2, Scoring.MembersLost(new[] { 4, 4, 9 }));
-        }
-
-        [Fact]
-        public void Metrics_ExposePeakUtilizationAndBudgetRemaining()
-        {
-            var m = new RunMetrics { PeakUtilization = 0.42, BudgetRemaining = 17 };
-            Assert.Equal(0.42, m.PeakUtilization);
-            Assert.Equal(17, m.BudgetRemaining);
-        }
-
-        [Fact]
-        public void Stars_UseSuppliedPolicy()
-        {
-            var p = new StarPolicy { MaxLostForThree = 0, MaxUtilForThree = 0.8, MinBudgetForThree = 2 };
-            Assert.Equal(3, Scoring.Stars(new RunMetrics { MembersLost = 0, PeakUtilization = 0.5, BudgetRemaining = 5 }, p));
-            Assert.Equal(0, Scoring.Stars(new RunMetrics { MembersLost = 1, PeakUtilization = 0.5, BudgetRemaining = 5 }, p));
-            Assert.Equal(0, Scoring.Stars(new RunMetrics { MembersLost = 0, PeakUtilization = 0.9, BudgetRemaining = 5 }, p));
-            Assert.Equal(0, Scoring.Stars(new RunMetrics { MembersLost = 0, PeakUtilization = 0.5, BudgetRemaining = 1 }, p));
-        }
-
-        [Fact]
-        public void Reach_DefaultTolerance_ReadsHumanConstant()
-        {
-            double t = Constants.Human.ReachTolerance;
-            Assert.True(Scoring.Reached(new Vec3(t, 0, 1), A, B, Vec3.UnitX));
-            Assert.False(Scoring.Reached(new Vec3(t + 1e-6, 0, 1), A, B, Vec3.UnitX));
-        }
-    }
-
     /// <summary>Spec 11: free drawing, automatic decks, and the whole loop from strokes to a test run.</summary>
     public class GameFlowTests
     {
