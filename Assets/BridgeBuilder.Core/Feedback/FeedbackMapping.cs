@@ -66,8 +66,8 @@ namespace BridgeBuilder.Core
         /// <summary>Plain words for students: why a member failed, and what helps (spec 1: see why it holds or fails).</summary>
         public static string Explain(FailureMode mode) => mode switch
         {
-            FailureMode.Tension => "Snapped: it was pulled harder than the steel can stretch. Share the pull with more members.",
-            FailureMode.Compression => "Crushed: it was squeezed harder than the steel can take. Add members to share the push.",
+            FailureMode.Tension => "Snapped: it was pulled harder than its material can stretch. Share the pull with more members.",
+            FailureMode.Compression => "Crushed: it was squeezed harder than its material can take. Add members to share the push.",
             FailureMode.Buckling => "Buckled: long, thin members bow sideways when squeezed. Make them shorter with triangles.",
             FailureMode.Bending => "Bent: a long beam sagged too far. Support it from below or above with triangles.",
             _ => "",

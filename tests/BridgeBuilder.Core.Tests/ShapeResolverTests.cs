@@ -213,7 +213,7 @@ namespace BridgeBuilder.Core.Tests
         public void ResolvedW_BuiltSideBySide_HasExactSharedCorners()
         {
             // What the game does (W4-04): each side of the polyline goes through FreeDraw on its own.
-            var m = new BridgeModel(new BudgetPolicy { CostPerMeter = 1, CostPerSquareMeter = 1, MaterialBudget = 500, NodeCap = 500 });
+            var m = new BridgeModel(BudgetPolicy.Uniform(1, 1, 500, 500));
             var s = ShapeResolver.Resolve(Stroke(12, 0.003, P(0, 1.3), P(0.15, 1.0), P(0.3, 1.2), P(0.45, 1.0), P(0.6, 1.3)));
             Assert.Equal(ResolvedKind.Polyline, s.Kind);
             for (int i = 0; i + 1 < s.Points.Count; i++)

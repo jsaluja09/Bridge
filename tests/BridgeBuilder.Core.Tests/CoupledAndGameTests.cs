@@ -81,21 +81,21 @@ namespace BridgeBuilder.Core.Tests
         public const double Top = 0.75;
         public static Pad[] Pads() => Pad.FromTaps(new Vec3(0, Top, 0), new Vec3(1, Top, 0)) is var (a, b) ? new[] { a, b } : null;
 
-        public static BridgeModel Model() => new BridgeModel(new BudgetPolicy
-        {
-            CostPerMeter = Constants.Budget.CostPerMeter, CostPerSquareMeter = Constants.Budget.CostPerSquareMeter,
-            MaterialBudget = Constants.Budget.MaterialBudget, NodeCap = Constants.Human.NodeCap + Constants.Draw.SupportNodeAllowance,
-        });
+        public static BridgeModel Model() => new BridgeModel(
+            BudgetPolicy.ForMaterials(Constants.Budget.MaterialBudget, Constants.Human.NodeCap + Constants.Draw.SupportNodeAllowance));
 
-        /// <summary>Draws a stroke from a to b (with slight hand noise) and adds it, like the game does.</summary>
-        public static void Draw(BridgeModel m, Pad[] pads, params Vec3[] corners)
+        /// <summary>Draws a wood stroke through the corners (with slight hand noise) and adds it, like the game does.</summary>
+        public static void Draw(BridgeModel m, Pad[] pads, params Vec3[] corners) => Draw(m, pads, BridgeMaterial.Wood, corners);
+
+        /// <summary>Draws a stroke through the corners in one material.</summary>
+        public static void Draw(BridgeModel m, Pad[] pads, BridgeMaterial material, params Vec3[] corners)
         {
             var raw = new List<Vec3>();
             var rng = new Random(7);
             for (int c = 0; c + 1 < corners.Length; c++)
                 for (int i = 0; i <= 30; i++)
                     raw.Add(Vec3.Lerp(corners[c], corners[c + 1], i / 30.0) + new Vec3(rng.NextDouble() - 0.5, rng.NextDouble() - 0.5, rng.NextDouble() - 0.5) * 0.002);
-            DrawStroke(m, pads, raw);
+            DrawStroke(m, pads, raw, material);
         }
 
         public static FreeDraw.Context Context(BridgeModel m, Pad[] pads) => new FreeDraw.Context
@@ -107,7 +107,7 @@ namespace BridgeBuilder.Core.Tests
         };
 
         /// <summary>Adds a raw stroke like BridgeGame.FinishStroke; returns the ids of the lines it made.</summary>
-        public static List<int> DrawStroke(BridgeModel m, Pad[] pads, List<Vec3> raw)
+        public static List<int> DrawStroke(BridgeModel m, Pad[] pads, List<Vec3> raw, BridgeMaterial material = BridgeMaterial.Wood)
         {
             var lines = new List<int>();
             foreach (var chain in FreeDraw.Build(raw, Context(m, pads), out _))
@@ -124,7 +124,7 @@ namespace BridgeBuilder.Core.Tests
                     else
                         vertices.Add(LineVertex.New(v.Position));
                 }
-                var result = m.TryAddFreeLine(vertices);
+                var result = m.TryAddFreeLine(vertices, (int)material);
                 Assert.True(result.Ok);
                 lines.Add(result.Id);
             }
@@ -134,28 +134,35 @@ namespace BridgeBuilder.Core.Tests
         public static Vec3 P(double x, double y, double z) => new Vec3(x, y, z);
 
         /// <summary>Two straight beams pad to pad, 0.2 m apart: the bare span with an automatic deck.</summary>
-        public static BridgeModel BareDeck(Pad[] pads)
+        public static BridgeModel BareDeck(Pad[] pads, BridgeMaterial rails = BridgeMaterial.Wood)
         {
             var m = Model();
-            Draw(m, pads, P(0, Top, -0.1), P(1, Top, -0.1));
-            Draw(m, pads, P(0, Top, 0.1), P(1, Top, 0.1));
+            Draw(m, pads, rails, P(0, Top, -0.1), P(1, Top, -0.1));
+            Draw(m, pads, rails, P(0, Top, 0.1), P(1, Top, 0.1));
             return m;
         }
 
-        /// <summary>A Pratt-style truss on each side of the deck, 0.2 m deep.</summary>
-        public static BridgeModel Truss(Pad[] pads)
+        /// <summary>A Pratt-style truss on each side of the deck, 0.2 m deep, all in one material.</summary>
+        public static BridgeModel Truss(Pad[] pads, BridgeMaterial all = BridgeMaterial.Wood) => Truss(pads, all, all, all, all, all);
+
+        /// <summary>
+        /// The same truss with a material per part: the rails (bottom chord), the top chord with its end posts,
+        /// the verticals, the outer diagonals and the two center diagonals.
+        /// </summary>
+        public static BridgeModel Truss(Pad[] pads, BridgeMaterial rails, BridgeMaterial chord, BridgeMaterial verticals,
+                                        BridgeMaterial outerDiagonals, BridgeMaterial centerDiagonals)
         {
-            var m = BareDeck(pads);
+            var m = BareDeck(pads, rails);
             const double h = Top + 0.2;
             foreach (double z in new[] { -0.1, 0.1 })
             {
-                Draw(m, pads, P(0, Top, z), P(0.2, h, z), P(0.8, h, z), P(1, Top, z));
+                Draw(m, pads, chord, P(0, Top, z), P(0.2, h, z), P(0.8, h, z), P(1, Top, z));
                 foreach (double x in new[] { 0.4, 0.6 })
-                    Draw(m, pads, P(x, Top, z), P(x, h, z));
-                Draw(m, pads, P(0.2, h, z), P(0.4, Top, z));
-                Draw(m, pads, P(0.8, h, z), P(0.6, Top, z));
-                Draw(m, pads, P(0.4, h, z), P(0.5, Top, z));
-                Draw(m, pads, P(0.6, h, z), P(0.5, Top, z));
+                    Draw(m, pads, verticals, P(x, Top, z), P(x, h, z));
+                Draw(m, pads, outerDiagonals, P(0.2, h, z), P(0.4, Top, z));
+                Draw(m, pads, outerDiagonals, P(0.8, h, z), P(0.6, Top, z));
+                Draw(m, pads, centerDiagonals, P(0.4, h, z), P(0.5, Top, z));
+                Draw(m, pads, centerDiagonals, P(0.6, h, z), P(0.5, Top, z));
             }
             return m;
         }

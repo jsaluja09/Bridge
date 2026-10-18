@@ -20,6 +20,8 @@ namespace BridgeBuilder.Game
         [SerializeField] Color flashColor = new Color(1f, 0.1f, 0.1f);
         [SerializeField] Color brokenColor = new Color(0.62f, 0.58f, 0.52f);
         [SerializeField] Color deckColor = new Color(0.3f, 0.3f, 0.33f);
+        [Tooltip("How much the flash and broken colors cover a falling piece's material.")]
+        [Range(0f, 1f)] [SerializeField] float pieceTint = 0.75f;   // GUESS
 
         const float MaxBowFraction = 0.15f;   // GUESS: a bow never exceeds this share of the member's length
         const int BowSegments = 6;
@@ -89,8 +91,11 @@ namespace BridgeBuilder.Game
 
         float Wave(float hz) => 0.5f + 0.5f * Mathf.Sin(_time * hz * Mathf.PI * 2f);
 
-        /// <summary>Draws a standing member: bowed sideways by its buckling utilization and pulsing near failure.</summary>
-        public void Member(BridgeView view, Vector3 a, Vector3 b, float radius, Color color, float utilization, float buckling)
+        /// <summary>
+        /// Draws a standing member in its material, the load color tinted over it: bowed sideways by its buckling
+        /// utilization and pulsing near failure.
+        /// </summary>
+        public void Member(BridgeView view, Vector3 a, Vector3 b, BridgeMaterial material, Color color, float tint, float utilization, float buckling)
         {
             if (FeedbackMapping.Pulse(utilization))
                 color = Color.Lerp(color, Color.white, Wave(PulseHz) * 0.6f);
@@ -98,23 +103,25 @@ namespace BridgeBuilder.Game
             float bow = Mathf.Min((float)FeedbackMapping.BowAmplitude(Mathf.Clamp01(buckling)), length * MaxBowFraction);
             if (bow < 1e-4f)
             {
-                view.Tube(a, b, radius, color, utilization);
+                view.Beam(a, b, material, color, tint, utilization);
                 return;
             }
             Vector3 axis = (b - a) / length;
             Vector3 side = Vector3.Cross(axis, Mathf.Abs(axis.y) < 0.95f ? Vector3.up : Vector3.right).normalized;
             Vector3 previous = a;
+            float along = 0f;
             for (int i = 1; i <= BowSegments; i++)
             {
                 float s = i / (float)BowSegments;
                 Vector3 p = Vector3.Lerp(a, b, s) + side * (bow * Mathf.Sin(Mathf.PI * s));
-                view.Tube(previous, p, radius, color, utilization);
+                view.Beam(previous, p, material, color, tint, utilization, 1f, along);
+                along += Vector3.Distance(previous, p);
                 previous = p;
             }
         }
 
-        /// <summary>Draws every falling piece: red and flashing when new, then broken-steel grey (or deck grey).</summary>
-        public void DrawPieces(BridgeView view, float radius)
+        /// <summary>Draws every falling piece: red and flashing when new, then broken grey over its material (or deck grey).</summary>
+        public void DrawPieces(BridgeView view)
         {
             if (_effects == null)
                 return;
@@ -128,7 +135,8 @@ namespace BridgeBuilder.Game
                     view.Triangle(f.Point(0).ToUnity(), f.Point(1).ToUnity(), f.Point(2).ToUnity(), c);
                     continue;
                 }
-                view.Tube(f.Point(0).ToUnity(), f.Point(1).ToUnity(), radius * (float)f.Scale, c);
+                var material = Materials.Of(_bridge.Input.Members[f.SourceMember].SectionId);
+                view.Beam(f.Point(0).ToUnity(), f.Point(1).ToUnity(), material, c, pieceTint, 0f, (float)f.Scale);
             }
         }
     }

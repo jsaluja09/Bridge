@@ -81,16 +81,21 @@ namespace BridgeBuilder.Core.Tests
         }
     }
 
-    /// <summary>W2-07: calibrate section size and yield so fixture 1 fails and fixture 5 holds the standard car.</summary>
+    /// <summary>
+    /// W2-07: calibrate each material's section and strengths so fixture 1 fails in every material and fixture 5,
+    /// built in wood, holds the standard car.
+    /// </summary>
     public class FixtureCalibrationTests
     {
         readonly ITestOutputHelper _out;
         public FixtureCalibrationTests(ITestOutputHelper output) => _out = output;
 
-        static double WorstUtilization(string fixture, string carNodesProperty)
+        static double WorstUtilization(string fixture, string carNodesProperty, BridgeMaterial material)
         {
             var file = FixtureLoader.Load(fixture);
-            var input = file.ToInput(Constants.Section.Standard(0));
+            var section = Materials.Section(material);
+            section.Id = 0;
+            var input = file.ToInput(section);
             using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(FixtureLoader.Directory, fixture)));
             var carNodes = json.RootElement.GetProperty(carNodesProperty).EnumerateArray().Select(e => e.GetInt32()).ToArray();
 
@@ -115,19 +120,22 @@ namespace BridgeBuilder.Core.Tests
             return worst;
         }
 
-        [Fact]
-        public void Fixture1_BareCantilevers_UtilizationAtLeastHumanMinimum()
+        [Theory]
+        [InlineData(BridgeMaterial.Wood)]
+        [InlineData(BridgeMaterial.Cable)]
+        [InlineData(BridgeMaterial.Concrete)]
+        public void Fixture1_BareCantilevers_UtilizationAtLeastHumanMinimum(BridgeMaterial material)
         {
-            double u = WorstUtilization("fixture-01-bare-cantilevers.json", "tips");
-            _out.WriteLine($"fixture 1 worst utilization {u:F3}");
+            double u = WorstUtilization("fixture-01-bare-cantilevers.json", "tips", material);
+            _out.WriteLine($"fixture 1 ({material}) worst utilization {u:F3}");
             Assert.True(u >= Constants.Human.Fixture1MinimumUtilization);
         }
 
         [Fact]
         public void Fixture5_Truss_UtilizationBelowHumanMaximum()
         {
-            double u = WorstUtilization("fixture-05-triangulated-truss.json", "deckNodes");
-            _out.WriteLine($"fixture 5 worst utilization {u:F3}");
+            double u = WorstUtilization("fixture-05-triangulated-truss.json", "deckNodes", BridgeMaterial.Wood);
+            _out.WriteLine($"fixture 5 (wood) worst utilization {u:F3}");
             Assert.True(u < Constants.Human.Fixture5MaximumUtilization);
         }
     }
