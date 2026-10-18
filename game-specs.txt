@@ -1,0 +1,206 @@
+BRIDGEBUILDER MR - GAME SPECS (as built on the `testing` branch)
+================================================================
+
+The design doc with the reasons behind each decision is docs/spec.md
+(section 11 covers the playtest changes summarized here).
+
+Every tuning value lives in Assets/BridgeBuilder.Core/Constants.*.cs and is tagged:
+  HUMAN_OWNED - only a person changes it (Constants.Human.cs is never edited by agents)
+  GUESS       - placeholder to tune in the headset
+  DERIVED     - follows from physics or a unit conversion
+
+
+1. WHAT IT IS
+-------------
+A mixed-reality bridge-building game for Meta Quest 2, for students new to physics
+and civil engineering. Passthrough shows the real room. You mark two ends, draw a
+bridge in the air, and send a car across. Members change color with load, and
+anything that breaks says why in plain words.
+
+  Engine:   Unity 6000.5.1f1, URP
+  XR:       OpenXR + Meta OpenXR, AR Foundation passthrough, XRI MR template
+  Target:   Meta Quest 2, Android min API 32 (set automatically by QuestBuildSettings)
+  Physics:  BridgeBuilder.Core - plain C#, no Unity code, tested with xUnit
+
+
+2. GAME FLOW
+------------
+1. Brief:   pick one of four challenges with the right stick, press A.
+2. Place:   two trigger taps mark the start and end. Each becomes a 0.3 x 0.3 m pad.
+            Taps must be at least 0.3 m apart horizontally. If the floor is at least
+            0.15 m below the lower pad, a grid of floor dots (0.10 m apart) appears
+            for piers.
+3. Build:   draw lines and check the dead-load colors.
+4. Testing: the car drives from the start pad to the other pad. The test runs on a
+            copy, so going back to building restores the bridge as built.
+
+
+3. CONTROLS
+-----------
+  Right trigger (hold)   Build: draw a line, release to place it
+                         Brief: start / Place: mark an end
+  Right grip             Build: delete the line under the tip
+  A                      Build: start the test / Brief: start / Testing: back to building
+  B                      Build: undo
+  X                      Build: clear (press twice within 2 s); with nothing built, back to brief
+                         Place: undo last tap / Testing: back to building
+  Y                      Build: swap which pad the car starts on
+  Right stick L/R        Brief: choose a challenge
+
+  Keyboard over Link: Space = A, Backspace = B, Delete = grip, R = X, Y = Y, arrows = stick
+
+
+4. BUILDING RULES
+-----------------
+Free drawing:
+  - A stroke can start anywhere in space.
+  - On release it's resampled, smoothed (moving average, 3 samples each side,
+    1 cm apart), straightened where nearly straight, then split into equal
+    segments with dots about 0.10 m apart.
+  - Strokes shorter than 0.04 m are rejected.
+  - A stroke joins any dot, pad top or floor dot it passes within 0.04 m of.
+    The cursor turns blue when a join is under the tip.
+
+Supports:
+  - The whole top of each pad is an anchor. A line end touching a pad becomes a
+    fixed support. Floor dots work the same way, for piers.
+
+Automatic road - a deck forms between two drawn lines when:
+  - both run from one pad to the other,
+  - they're side by side, 0.08-0.30 m apart,
+  - they're within 20 degrees of parallel,
+  - the slope is at most 20 degrees.
+  The deck is triangulated with hidden braces (shortest-diagonal zigzag) and has
+  weight and stiffness like any member. The panel says "Road ready" when it's valid.
+
+Deleting and limits:
+  - Grip deletes the line under the tip (within 3 cm).
+  - A line other lines hang from can't be deleted until those are gone; the
+    blocking members flash red.
+  - Each challenge has a material budget in room meters of line.
+  - Node cap: 150 (HUMAN_OWNED) + 60 extra for pad and floor supports.
+
+
+5. CHALLENGES
+-------------
+  First crossing   "Get a car across. Hint: triangles are strong."
+                   1.5 t car, no wind, grip 0.9, 14 m material
+  Heavy truck      "A 12 tonne truck. Spread its weight."
+                   12 t, no wind, grip 0.9, 18 m material
+  Crosswind        "A 15 m/s wind pushes from the side."
+                   1.5 t, 15 m/s wind, grip 0.9, 16 m material
+  Icy and windy    "Slippery tires and a 10 m/s wind."
+                   1.5 t, 10 m/s wind, grip 0.3, 16 m material
+
+  PASS: the car reaches the far pad (within 0.25 m, HUMAN_OWNED) before the 30 s
+        timeout without falling (airborne 0.5 s counts as falling).
+  3 STARS: no members broken, peak load <= 80%, >= 25% of material left
+           (GUESS until HG-stars decides). Otherwise no stars.
+
+
+6. SCALE AND MATERIAL
+---------------------
+Scale: 1 m in the room = 20 m of bridge (GUESS). Physics runs in bridge-world SI units.
+
+Material - steel placeholders (HUMAN_OWNED, pending HG-material):
+  Young's modulus E   2.0e11 Pa
+  Shear modulus G     7.69e10 Pa
+  Density             7850 kg/m^3
+  Yield strength      250e6 Pa (GUESS)
+
+One cross-section for every member (GUESS, calibrated against fixtures 1 and 5):
+  Area A                       4.0e-3 m^2
+  Second moment I (both axes)  1.6e-5 m^4
+  Torsion constant J           1.0e-6 m^4 (HUMAN_OWNED)
+  Outer fiber distance c       0.1 m
+
+Calibration results:
+  Fixture 1, bare cantilever   1.97              fails (required >= 1.0)
+  Fixture 5, truss             0.027             holds (required < 1.0)
+  Bare deck in game            0.99 under car    holds itself, fails under the car
+  Truss bridge in game         0.35              passes
+
+
+7. PHYSICS MODEL
+----------------
+Structure:
+  - Each member is a 3D Euler-Bernoulli frame element (12 DOF, 6 per node).
+    Joints are rigid.
+  - Stiffness matrix uses reverse Cuthill-McKee ordering and a banded Cholesky solver.
+
+Member capacity - utilization is the worst of:
+  Tension       axial force / (A * Fy)
+  Compression   axial force / (A * Fy)
+  Buckling      axial force / Euler critical load, K = 0.5 (HUMAN_OWNED),
+                member length measured between junctions
+  Bending       M * c / I, divided by Fy
+  A member breaks at 1.0. Failure is progressive: at most 3 members removed per
+  step, so collapses unfold over several frames. Loose pieces fall as debris (XPBD).
+
+Dynamics:
+  Integration   Newmark average acceleration (beta 0.25, gamma 0.5, DERIVED) at 60 Hz
+  Damping       Rayleigh, ratio 0.02 at 1 Hz and 20 Hz (GUESS)
+  Test start    bridge settles under its own weight (static solve), then the car starts
+  Gravity       9.80665 m/s^2
+
+Car (all GUESS, pending HG-car-and-wind):
+  Four wheels with suspension, coupled to the bridge (bridge state lagged one step).
+  Springs sized for 0.12 m of sag at rest.
+  Wheelbase 2.7 m, track 1.6 m, length 4.5 m, spring rest length 0.6 m,
+  damping 0.5 of critical, cruise speed 8 m/s.
+  Wind: side area 6 m^2, front 2.5 m^2, drag 1.0; members drag 1.2 at 0.2 m diameter.
+  Air density 1.225 kg/m^3 (DERIVED).
+
+Threading:
+  - Physics runs on a worker thread with triple-buffered snapshots, so the
+    headset never waits on the solver.
+  - The dead-load preview runs 0.3 s after the last edit and is canceled if
+    drawing starts again.
+
+
+8. FEEDBACK
+-----------
+While building: colors show how hard the bridge works to hold itself up.
+Purple = not attached to anything, will fall.
+
+During a test (GUESS thresholds):
+  Color          green < 50%, yellow 50-80%, red > 80%
+  Pulse          at 90% and above
+  Stripes        denser with load, 1-8
+  Buckling bow   up to 5 cm
+  Creak sound    pitch 80 -> 400 Hz as the worst member nears failure
+  Break marker   pulsing red dot where a member broke
+
+Failure messages shown to students:
+  Tension      "Snapped: it was pulled harder than the steel can stretch. Share the pull with more members."
+  Compression  "Crushed: it was squeezed harder than the steel can take. Add members to share the push."
+  Buckling     "Buckled: long, thin members bow sideways when squeezed. Make them shorter with triangles."
+  Bending      "Bent: a long beam sagged too far. Support it from below or above with triangles."
+
+Solver stats: the grey line at the bottom of the panel shows member count, ms per
+step, test start time and preview time. Use it to benchmark the node cap on the headset.
+
+
+9. OPEN HUMAN DECISIONS
+-----------------------
+  HG-bracing        deck bracing pattern     -> shortest-diagonal zigzag for now (1 test skipped)
+  HG-car-and-wind   car and wind constants   -> values in section 7
+  HG-stars          3-star thresholds        -> rules in section 5
+  HG-reach          what counts as arriving  -> within 0.25 m of the far pad
+  HG-material       the material             -> steel placeholders in section 6
+  HG-licenses       sourced assets           -> built-in primitives only
+
+
+10. PROJECT LAYOUT AND TESTS
+----------------------------
+  Assets/BridgeBuilder.Core/        physics, model, recognition, game rules (no UnityEngine)
+  Assets/BridgeBuilder/Game/        Unity layer: input, drawing, HUD, worker thread, passthrough
+  Assets/BridgeBuilder/Editor/      Quest build settings
+  dotnet/BridgeBuilder.Core.csproj  builds Core outside Unity (netstandard2.1, C# 9)
+  tests/BridgeBuilder.Core.Tests/   xUnit tests and JSON fixtures
+  .github/workflows/core-ci.yml     CI: build and test Core on every push
+
+  Run tests:  dotnet test tests/BridgeBuilder.Core.Tests/BridgeBuilder.Core.Tests.csproj
+  Current:    155 passed, 1 skipped (waiting on HG-bracing)
+
+Work is split into the GitHub issues (waves W0-W3); rules are in AGENTS.md.
