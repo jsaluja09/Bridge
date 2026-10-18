@@ -136,3 +136,9 @@ Assets/Resources.meta
 # Third-party assets each developer imports locally (Asset Store EULA, HG-licenses)
 Assets/ThirdParty/
 Assets/ThirdParty.meta
+
+# Gemini coach API key: local only, the repo is public. The whole folder is ignored so a misnamed key file is too.
+Assets/BridgeBuilder/Coach/Resources/GeminiApiKey.txt
+Assets/BridgeBuilder/Coach/Resources/GeminiApiKey.txt.meta
+Assets/BridgeBuilder/Coach/Resources/
+Assets/BridgeBuilder/Coach/Resources.meta
