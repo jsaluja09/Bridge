@@ -15,21 +15,31 @@ namespace BridgeBuilder.Core
     /// collide with nothing and take no wheel loads (HG-fall). Runs on the calling thread.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Falling displacements are in the length units of the input given to <see cref="Reset"/>: the
-    /// bridge-world drop divided by its <see cref="SolverInput.ScaleFactor"/>. For a bridge-world input
-    /// from <see cref="RoomBridgeAdapter.ToBridge(SolverInput)"/> that is bridge-world meters, as
-    /// <see cref="NewmarkIntegrator"/> reports; for a room input it is room units, as
-    /// <see cref="StepOutput.Displacements"/> documents. A free node with no member belongs to no piece
-    /// and stays at zero displacement.
+    /// bridge-world drop divided by its <see cref="SolverInput.ScaleFactor"/>. For a room input that is room
+    /// units, as <see cref="CoupledStep"/> reports; for a bridge-world input from
+    /// <see cref="RoomBridgeAdapter.ToBridge(SolverInput)"/> it is bridge-world meters, as
+    /// <see cref="NewmarkIntegrator"/> reports. A free node with no member belongs to no piece and stays
+    /// at zero displacement.
+    /// </para>
+    /// <para>
+    /// Cancelling is decided once per step, before anything moves: the wrapped solver is handed a cancel
+    /// callback that always returns false, so the wrapped step and the fall clock always advance together.
+    /// A cancel that arrives during a step is honoured on the next call.
+    /// </para>
     /// </remarks>
     public sealed class UnsupportedFallSolver : IDynamicSolver
     {
+        private static readonly Func<bool> NeverCancel = () => false;
+
         private readonly IDynamicSolver solver;
 
         private bool ready;
         private int nodeCount;
         private int[] memberIds;
         private bool[] memberSupported;
+        private HashSet<int> supportedMemberIds;
         private bool[] nodeFalls;
         private double scaleFactor;
         private StepOutput previous;
@@ -47,13 +57,21 @@ namespace BridgeBuilder.Core
         public SupportPartitionResult Partition { get; private set; }
 
         /// <summary>
-        /// Starts a run with the unsupported pieces at rest. The wrapped solver is reset with the supported
-        /// input and <paramref name="configuration"/>, or not called at all when no member is supported.
-        /// The input is read and never modified.
+        /// Starts a run with the unsupported pieces at rest. The whole input, unsupported part included, is
+        /// first checked as <see cref="CoupledStep"/> checks its own: with
+        /// <see cref="RoomBridgeAdapter.ToBridge(SolverInput)"/> and
+        /// <see cref="DynamicSelfWeight.Loads(SolverInput, IReadOnlyCollection{int})"/>. The wrapped solver is
+        /// then reset with the supported input and <paramref name="configuration"/>, or not called at all when
+        /// no member is supported. The input is read and never modified.
         /// </summary>
         /// <exception cref="ArgumentNullException"><paramref name="input"/> is null.</exception>
-        /// <exception cref="ArgumentOutOfRangeException">The input's scale factor is not positive and finite.</exception>
-        /// <exception cref="ArgumentException">The input is inconsistent; see <see cref="SupportPartition.Split"/>.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">
+        /// The input's scale factor, a scaled node position, a member length, an area, or a density is not
+        /// positive and finite.
+        /// </exception>
+        /// <exception cref="ArgumentException">
+        /// The input is inconsistent (see <see cref="SupportPartition.Split"/>), or a member names a missing section.
+        /// </exception>
         /// <remarks>The wrapped solver's own exceptions reach the caller, and the solver then needs a new reset.</remarks>
         public void Reset(SolverInput input, RunConfiguration configuration)
         {
@@ -71,6 +89,7 @@ namespace BridgeBuilder.Core
             }
 
             SupportPartitionResult partition = SupportPartition.Split(input);
+            DynamicSelfWeight.Loads(RoomBridgeAdapter.ToBridge(input), Array.Empty<int>());
             if (partition.HasSupportedMembers)
             {
                 solver.Reset(partition.SupportedInput, configuration);
@@ -91,11 +110,16 @@ namespace BridgeBuilder.Core
             }
 
             var ids = new int[members.Length];
+            var supportedIds = new HashSet<int>();
             var falls = new bool[nodes.Length];
             for (int m = 0; m < members.Length; m++)
             {
                 ids[m] = members[m].Id;
-                if (!supported[m])
+                if (supported[m])
+                {
+                    supportedIds.Add(members[m].Id);
+                }
+                else
                 {
                     falls[nodeIndexById[members[m].NodeA]] = true;
                     falls[nodeIndexById[members[m].NodeB]] = true;
@@ -105,6 +129,7 @@ namespace BridgeBuilder.Core
             nodeCount = nodes.Length;
             memberIds = ids;
             memberSupported = supported;
+            supportedMemberIds = supportedIds;
             nodeFalls = falls;
             scaleFactor = scale;
             ElapsedSeconds = 0.0;
@@ -114,12 +139,12 @@ namespace BridgeBuilder.Core
         }
 
         /// <summary>
-        /// Advances <paramref name="dt"/> seconds. <paramref name="shouldCancel"/> is polled first; when it
-        /// returns true nothing is stepped, <see cref="ElapsedSeconds"/> stays, and the previous output is
+        /// Advances <paramref name="dt"/> seconds. <paramref name="shouldCancel"/> is polled once, first; when
+        /// it returns true nothing is stepped, <see cref="ElapsedSeconds"/> stays, and the previous output is
         /// returned. Otherwise the wrapped solver steps with <paramref name="previousWheelLoads"/> unchanged
-        /// and polls the same callback; a true poll there is taken as the wrapped step cancelling too, with
-        /// the same result. Before the first completed step the previous output is the run at rest: zero
-        /// displacements and rotations, a zero force for every member, no failures, and no car state.
+        /// and a cancel callback that always returns false. Before the first completed step the previous
+        /// output is the run at rest: zero displacements and rotations, a zero force for every member, no
+        /// failures, and a null car state.
         /// </summary>
         /// <returns>
         /// One displacement and rotation per node in input order; the forces of the standing members in
@@ -161,17 +186,7 @@ namespace BridgeBuilder.Core
                 Dictionary<int, MemberForce> supportedForces = null;
                 if (Partition.HasSupportedMembers)
                 {
-                    bool cancelled = false;
-                    supported = solver.Step(previousWheelLoads, dt, () =>
-                    {
-                        cancelled |= shouldCancel();
-                        return cancelled;
-                    });
-                    if (cancelled)
-                    {
-                        return previous;
-                    }
-
+                    supported = solver.Step(previousWheelLoads, dt, NeverCancel);
                     supportedForces = RequireMatchingOutput(supported);
                 }
 
@@ -275,16 +290,10 @@ namespace BridgeBuilder.Core
                 throw new InvalidOperationException("The wrapped dynamic solver returned no member forces.");
             }
 
-            var supportedIds = new HashSet<int>();
-            foreach (Member member in supportedInput.Members)
-            {
-                supportedIds.Add(member.Id);
-            }
-
             var forcesById = new Dictionary<int, MemberForce>(supported.MemberForces.Length);
             foreach (MemberForce force in supported.MemberForces)
             {
-                if (force == null || !supportedIds.Contains(force.MemberId) || forcesById.ContainsKey(force.MemberId))
+                if (force == null || !supportedMemberIds.Contains(force.MemberId) || forcesById.ContainsKey(force.MemberId))
                 {
                     throw new InvalidOperationException(
                         "The wrapped dynamic solver returned a force for a missing, repeated, or unsupported member"

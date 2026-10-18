@@ -27,10 +27,10 @@ namespace BridgeBuilder.Core
         }
 
         /// <summary>
-        /// The supported nodes and members in their original relative order. The node and member
-        /// objects, the <see cref="SolverInput.Fills"/> and <see cref="SolverInput.Sections"/> arrays, and
-        /// the <see cref="SolverInput.ScaleFactor"/> are the input's own, so a fill on an unsupported
-        /// piece still names nodes that are not in this input.
+        /// The supported nodes and members in their original relative order, with the input's own node and
+        /// member objects, <see cref="SolverInput.Sections"/> array, and <see cref="SolverInput.ScaleFactor"/>.
+        /// <see cref="SolverInput.Fills"/> keeps, in order, only the fills whose nodes are all supported, so
+        /// every fill names nodes in this input; it is the input's own array when no fill is dropped.
         /// </summary>
         public SolverInput SupportedInput { get; }
 
@@ -66,7 +66,7 @@ namespace BridgeBuilder.Core
     {
         /// <summary>
         /// Splits <paramref name="input"/> into its supported part and its unsupported pieces. The input
-        /// is not modified. Sections, fills, and positions are not checked here.
+        /// is not modified. Sections, positions, and the fills that are kept are not checked here.
         /// </summary>
         /// <exception cref="ArgumentNullException"><paramref name="input"/> is null.</exception>
         /// <exception cref="ArgumentException">
@@ -117,6 +117,7 @@ namespace BridgeBuilder.Core
 
             var supportedNodes = new List<Node>();
             var supportedNodeIndices = new List<int>();
+            var supportedNodeIds = new HashSet<int>();
             var unsupportedNodeIds = new List<int>();
             for (int i = 0; i < nodes.Length; i++)
             {
@@ -124,6 +125,7 @@ namespace BridgeBuilder.Core
                 {
                     supportedNodes.Add(nodes[i]);
                     supportedNodeIndices.Add(i);
+                    supportedNodeIds.Add(nodes[i].Id);
                 }
                 else
                 {
@@ -161,7 +163,7 @@ namespace BridgeBuilder.Core
             {
                 Nodes = supportedNodes.ToArray(),
                 Members = supportedMembers.ToArray(),
-                Fills = input.Fills,
+                Fills = SupportedFills(input.Fills, supportedNodeIds),
                 Sections = input.Sections,
                 ScaleFactor = input.ScaleFactor,
             };
@@ -178,6 +180,29 @@ namespace BridgeBuilder.Core
                 unsupportedNodeIds.ToArray(),
                 unsupportedMemberIds.ToArray(),
                 pieceArrays);
+        }
+
+        /// <summary>
+        /// The fills whose node ids are all supported, in order, or <paramref name="fills"/> itself when none
+        /// is dropped. A null fill or node id array is kept unchecked, for whoever reads the fills to reject.
+        /// </summary>
+        private static Fill[] SupportedFills(Fill[] fills, HashSet<int> supportedNodeIds)
+        {
+            if (fills == null)
+            {
+                return null;
+            }
+
+            var kept = new List<Fill>(fills.Length);
+            foreach (Fill fill in fills)
+            {
+                if (fill?.NodeIds == null || Array.TrueForAll(fill.NodeIds, supportedNodeIds.Contains))
+                {
+                    kept.Add(fill);
+                }
+            }
+
+            return kept.Count == fills.Length ? fills : kept.ToArray();
         }
 
         private static int Find(int[] root, int node)

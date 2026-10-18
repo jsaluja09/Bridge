@@ -159,17 +159,16 @@ namespace BridgeBuilder.Core.Tests
             Assert.Equal(3, spy.StepCount);
             Assert.Equal(elapsed, fall.ElapsedSeconds);
 
+            // The caller's callback says stop from its second poll on, but the wrapper polls it once per step
+            // and hands the spy a callback that never cancels, so this step completes and the next is cancelled.
             spy.PollsCancel = true;
             int calls = 0;
-            StepOutput cancelledInside = fall.Step(Array.Empty<WheelLoad>(), Dt, () => ++calls > 1);
+            Func<bool> cancelFromSecondPoll = () => ++calls > 1;
+            StepOutput resumed = fall.Step(Array.Empty<WheelLoad>(), Dt, cancelFromSecondPoll);
 
-            Assert.Same(last, cancelledInside);
-            Assert.Equal(2, calls);
-            Assert.Equal(3, spy.StepCount);
-            Assert.Equal(elapsed, fall.ElapsedSeconds);
-
-            StepOutput resumed = fall.Step(Array.Empty<WheelLoad>(), Dt, () => false);
-
+            Assert.NotSame(last, resumed);
+            Assert.Equal(1, calls);
+            Assert.Equal(new[] { false }, spy.InnerPolls);
             Assert.Equal(4, spy.StepCount);
             double t = 4 * Dt;
             AssertRelative(t, fall.ElapsedSeconds, FallTolerance);
@@ -177,6 +176,56 @@ namespace BridgeBuilder.Core.Tests
             {
                 AssertRelative(-0.5 * Gravity * t * t, resumed.Displacements[IndexOf(input, id)].Y, FallTolerance);
             }
+
+            Assert.Same(resumed, fall.Step(Array.Empty<WheelLoad>(), Dt, cancelFromSecondPoll));
+            Assert.Equal(2, calls);
+            Assert.Equal(4, spy.StepCount);
+            AssertRelative(t, fall.ElapsedSeconds, FallTolerance);
+        }
+
+        [Fact]
+        public void Fall_CancelDuringWrappedStep_KeepsClocksInStep()
+        {
+            SolverInput input = RoomBridgeAdapter.ToBridge(FloatingFrame(Constants.Scale.RoomToBridge));
+            bool cancelRequested = false;
+            var spy = new SpyDynamicSolver
+            {
+                PollsCancelAfterStep = true,
+                Respond = (received, step) =>
+                {
+                    cancelRequested = true;
+                    return SpyDynamicSolver.DefaultOutput(received, step);
+                },
+            };
+            var fall = new UnsupportedFallSolver(spy);
+            fall.Reset(input, Configuration());
+            var reportedFailures = new List<int>();
+            const int steps = FailStep + 2;
+            StepOutput last = null;
+
+            for (int n = 1; n <= steps; n++)
+            {
+                cancelRequested = false;
+                last = fall.Step(Array.Empty<WheelLoad>(), Dt, () => cancelRequested);
+
+                Assert.True(cancelRequested, "The cancel should arrive while the wrapped solver steps.");
+                Assert.Equal(n, spy.StepCount);
+                Assert.Equal(n, spy.Outputs.Count);
+                AssertRelative(spy.StepCount * Dt, fall.ElapsedSeconds, FallTolerance);
+                Assert.Same(spy.Outputs.Last().FailedMemberIds, last.FailedMemberIds);
+                Assert.Equal(n >= FailStep, last.MemberForces.All(f => f.MemberId != FailedMemberId));
+                reportedFailures.AddRange(last.FailedMemberIds);
+            }
+
+            Assert.Equal(new[] { FailedMemberId }, reportedFailures);
+            Assert.Equal(steps, spy.InnerPolls.Count);
+            Assert.All(spy.InnerPolls, Assert.False);
+
+            StepOutput cancelled = fall.Step(Array.Empty<WheelLoad>(), Dt, () => cancelRequested);
+
+            Assert.Same(last, cancelled);
+            Assert.Equal(steps, spy.StepCount);
+            AssertRelative(steps * Dt, fall.ElapsedSeconds, FallTolerance);
         }
 
         [Fact]
@@ -225,6 +274,46 @@ namespace BridgeBuilder.Core.Tests
             Assert.Same(fills, input.Fills);
             Assert.Same(sections, input.Sections);
             Assert.Equal(before, Describe(input));
+        }
+
+        [Fact]
+        public void Fall_WithCoupledStep_FallsInRoomUnits()
+        {
+            const double scale = Constants.Scale.RoomToBridge;
+            SolverInput room = CoupledDeck(scale);
+            RunConfiguration configuration = Configuration();
+            configuration.Car = CoupledCar();
+            var fall = new UnsupportedFallSolver(new CoupledStep(CoupledStartCar(configuration.Car, scale)));
+            var alone = new CoupledStep(CoupledStartCar(configuration.Car, scale));
+            SupportPartitionResult split = SupportPartition.Split(room);
+
+            Assert.Throws<InvalidOperationException>(() => new CoupledStep(CoupledStartCar(configuration.Car, scale)).Reset(room, configuration));
+            fall.Reset(room, configuration);
+            alone.Reset(split.SupportedInput, configuration);
+            WheelLoad[] wheels = Array.Empty<WheelLoad>();
+            WheelLoad[] aloneWheels = Array.Empty<WheelLoad>();
+            for (int n = 1; n <= Steps; n++)
+            {
+                StepOutput output = fall.Step(wheels, Dt, () => false);
+                StepOutput expected = alone.Step(aloneWheels, Dt, () => false);
+                wheels = output.CarState.WheelLoads;
+                aloneWheels = expected.CarState.WheelLoads;
+
+                Assert.All(output.Displacements, v => AssertFinite(v, "Displacement"));
+                Assert.All(output.Rotations, v => AssertFinite(v, "Rotation"));
+                Assert.All(output.MemberForces, AssertFinite);
+                Assert.Equal(expected.CarState.Position, output.CarState.Position);
+                for (int j = 0; j < split.SupportedNodeIndices.Length; j++)
+                {
+                    Assert.Equal(expected.Displacements[j], output.Displacements[split.SupportedNodeIndices[j]]);
+                }
+
+                double t = n * Dt;
+                foreach (int id in new[] { 101, 102, 103, 201, 202, 203 })
+                {
+                    AssertRelative(-0.5 * Gravity * t * t / scale, output.Displacements[IndexOf(room, id)].Y, FallTolerance);
+                }
+            }
         }
 
         [Fact]
@@ -314,12 +403,38 @@ namespace BridgeBuilder.Core.Tests
                 Assert.Equal(1, brokenSpy.StepCount);
             }
 
-            var failingReset = new UnsupportedFallSolver(new IntegratorSolver());
-            SolverInput badSection = RoomBridgeAdapter.ToBridge(FloatingFrame(Constants.Scale.RoomToBridge));
-            badSection.Sections = new[] { new SectionProperties { Id = 1 } };
-            Assert.ThrowsAny<ArgumentException>(() => failingReset.Reset(badSection, Configuration()));
+            var rejectingSpy = new SpyDynamicSolver { ResetFailure = new InvalidOperationException("The structure is a mechanism.") };
+            var failingReset = new UnsupportedFallSolver(rejectingSpy);
+            Assert.Same(rejectingSpy.ResetFailure, Assert.Throws<InvalidOperationException>(() => failingReset.Reset(input, Configuration())));
+            Assert.Equal(1, rejectingSpy.ResetCount);
             Assert.Null(failingReset.Partition);
             Assert.Throws<InvalidOperationException>(() => failingReset.Step(Array.Empty<WheelLoad>(), Dt, () => false));
+        }
+
+        [Fact]
+        public void Fall_RejectsInvalidUnsupportedPart()
+        {
+            var spy = new SpyDynamicSolver();
+            var fall = new UnsupportedFallSolver(spy);
+
+            SolverInput missingSection = RoomBridgeAdapter.ToBridge(FloatingFrame(Constants.Scale.RoomToBridge));
+            missingSection.Members = missingSection.Members.Select(m => m.Id == 11 ? new Member { Id = 11, NodeA = 101, NodeB = 102, SectionId = 9, LineId = 10 } : m).ToArray();
+            Assert.Throws<ArgumentException>(() => fall.Reset(missingSection, Configuration()));
+
+            SolverInput infinitePosition = RoomBridgeAdapter.ToBridge(FloatingFrame(Constants.Scale.RoomToBridge));
+            infinitePosition.Nodes[IndexOf(infinitePosition, 101)] = new Node { Id = 101, Position = new Vec3(double.PositiveInfinity, 12, 0) };
+            Assert.Throws<ArgumentOutOfRangeException>(() => fall.Reset(infinitePosition, Configuration()));
+
+            SolverInput weightless = RoomBridgeAdapter.ToBridge(FloatingFrame(Constants.Scale.RoomToBridge));
+            SectionProperties hollow = StandardSection();
+            hollow.Id = 2;
+            hollow.Density = 0.0;
+            weightless.Sections = weightless.Sections.Append(hollow).ToArray();
+            weightless.Members = weightless.Members.Select(m => m.Id == 21 ? new Member { Id = 21, NodeA = 201, NodeB = 202, SectionId = 2, LineId = 20 } : m).ToArray();
+            Assert.Throws<ArgumentOutOfRangeException>(() => fall.Reset(weightless, Configuration()));
+
+            Assert.Equal(0, spy.ResetCount);
+            Assert.Null(fall.Partition);
         }
 
         // The truss of DeadLoadPreviewTests, fixed at both surfaces, interleaved with a floating
@@ -364,6 +479,79 @@ namespace BridgeBuilder.Core.Tests
                 },
                 Sections = new[] { StandardSection() },
                 ScaleFactor = scale,
+            };
+        }
+
+        // Two room-unit girders at height 1 from surface 1 to surface 2 with a cross member, braces, and two
+        // road panels, plus a floating line and a floating triangle with its own road fill.
+        private static SolverInput CoupledDeck(double scale)
+        {
+            return new SolverInput
+            {
+                Nodes = new[]
+                {
+                    new Node { Id = 1, Position = new Vec3(0, 1, 0), Fixed = true, SurfaceId = 1 },
+                    new Node { Id = 2, Position = new Vec3(0.1, 1, 0) },
+                    new Node { Id = 3, Position = new Vec3(0.2, 1, 0), Fixed = true, SurfaceId = 2 },
+                    new Node { Id = 101, Position = new Vec3(0.05, 1.3, 0.1) },
+                    new Node { Id = 102, Position = new Vec3(0.1, 1.3, 0.1) },
+                    new Node { Id = 103, Position = new Vec3(0.15, 1.3, 0.1) },
+                    new Node { Id = 4, Position = new Vec3(0, 1, 0.2), Fixed = true, SurfaceId = 1 },
+                    new Node { Id = 5, Position = new Vec3(0.1, 1, 0.2) },
+                    new Node { Id = 6, Position = new Vec3(0.2, 1, 0.2), Fixed = true, SurfaceId = 2 },
+                    new Node { Id = 201, Position = new Vec3(0.05, 1.5, 0) },
+                    new Node { Id = 202, Position = new Vec3(0.15, 1.5, 0) },
+                    new Node { Id = 203, Position = new Vec3(0.1, 1.5, 0.2) },
+                },
+                Members = new[]
+                {
+                    new Member { Id = 1, NodeA = 1, NodeB = 2, SectionId = 1, LineId = 1 },
+                    new Member { Id = 2, NodeA = 2, NodeB = 3, SectionId = 1, LineId = 1 },
+                    new Member { Id = 11, NodeA = 101, NodeB = 102, SectionId = 1, LineId = 10 },
+                    new Member { Id = 3, NodeA = 4, NodeB = 5, SectionId = 1, LineId = 2 },
+                    new Member { Id = 4, NodeA = 5, NodeB = 6, SectionId = 1, LineId = 2 },
+                    new Member { Id = 12, NodeA = 102, NodeB = 103, SectionId = 1, LineId = 10 },
+                    new Member { Id = 5, NodeA = 2, NodeB = 5, SectionId = 1, LineId = 3 },
+                    new Member { Id = 6, NodeA = 1, NodeB = 5, SectionId = 1, HiddenBrace = true },
+                    new Member { Id = 7, NodeA = 2, NodeB = 6, SectionId = 1, HiddenBrace = true },
+                    new Member { Id = 21, NodeA = 201, NodeB = 202, SectionId = 1, LineId = 20 },
+                    new Member { Id = 22, NodeA = 202, NodeB = 203, SectionId = 1, LineId = 20 },
+                    new Member { Id = 23, NodeA = 203, NodeB = 201, SectionId = 1, LineId = 20 },
+                },
+                Fills = new[]
+                {
+                    new Fill { Id = 1, NodeIds = new[] { 1, 2, 5, 4 }, Road = true, Valid = true },
+                    new Fill { Id = 2, NodeIds = new[] { 201, 202, 203 }, Road = true, Valid = true },
+                    new Fill { Id = 3, NodeIds = new[] { 2, 3, 6, 5 }, Road = true, Valid = true },
+                },
+                Sections = new[] { StandardSection() },
+                ScaleFactor = scale,
+            };
+        }
+
+        private static CarParameters CoupledCar()
+        {
+            return new CarParameters
+            {
+                MassKg = Constants.Human.CarMassKg,
+                WheelCount = 4,
+                Wheelbase = 2.5,
+                Track = 1.5,
+                SpringStiffness = 40000.0,
+                DamperCoefficient = 3000.0,
+                RestLength = 0.3,
+            };
+        }
+
+        /// <summary>The car on surface 1 behind the deck, centered on the road, with its struts at static compression.</summary>
+        private static CarState CoupledStartCar(CarParameters car, double scale)
+        {
+            double compression = car.MassKg * Gravity / (car.WheelCount * car.SpringStiffness);
+            return new CarState
+            {
+                Position = new Vec3(-3.0, scale + car.RestLength - compression, 0.1 * scale),
+                Heading = Vec3.UnitX,
+                Speed = 5.0,
             };
         }
 
@@ -464,6 +652,18 @@ namespace BridgeBuilder.Core.Tests
             /// <summary>When true, a step polls the cancel callback first and returns its last output if it says stop.</summary>
             public bool PollsCancel { get; set; }
 
+            /// <summary>
+            /// When true, a step advances, then polls the cancel callback and returns its last output if it says
+            /// stop, so a true poll there would hide a step the spy has already taken.
+            /// </summary>
+            public bool PollsCancelAfterStep { get; set; }
+
+            /// <summary>What every poll of the cancel callback the spy was handed returned.</summary>
+            public List<bool> InnerPolls { get; } = new List<bool>();
+
+            /// <summary>When set, <see cref="Reset"/> records the call and then throws this.</summary>
+            public Exception ResetFailure { get; set; }
+
             public int ResetCount { get; private set; }
 
             public int StepCount { get; private set; }
@@ -496,6 +696,11 @@ namespace BridgeBuilder.Core.Tests
             public void Reset(SolverInput input, RunConfiguration configuration)
             {
                 ResetCount++;
+                if (ResetFailure != null)
+                {
+                    throw ResetFailure;
+                }
+
                 ResetInput = input;
                 ResetConfiguration = configuration;
                 StepCount = 0;
@@ -504,7 +709,7 @@ namespace BridgeBuilder.Core.Tests
 
             public StepOutput Step(WheelLoad[] previousWheelLoads, double dt, Func<bool> shouldCancel)
             {
-                if (PollsCancel && shouldCancel())
+                if (PollsCancel && Poll(shouldCancel))
                 {
                     return last;
                 }
@@ -512,9 +717,22 @@ namespace BridgeBuilder.Core.Tests
                 StepCount++;
                 ReceivedWheelLoads.Add(previousWheelLoads);
                 ReceivedDt.Add(dt);
-                last = Respond(ResetInput, StepCount);
+                StepOutput next = Respond(ResetInput, StepCount);
+                if (PollsCancelAfterStep && Poll(shouldCancel))
+                {
+                    return last;
+                }
+
+                last = next;
                 Outputs.Add(last);
                 return last;
+            }
+
+            private bool Poll(Func<bool> shouldCancel)
+            {
+                bool cancel = shouldCancel();
+                InnerPolls.Add(cancel);
+                return cancel;
             }
         }
 

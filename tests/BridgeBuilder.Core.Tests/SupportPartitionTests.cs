@@ -39,7 +39,7 @@ namespace BridgeBuilder.Core.Tests
             }
 
             Assert.Same(input.Sections, supported.Sections);
-            Assert.Same(input.Fills, supported.Fills);
+            Assert.Equal(new[] { input.Fills[0] }, supported.Fills);
             Assert.Equal(input.ScaleFactor, supported.ScaleFactor);
             Assert.True(split.HasSupportedMembers);
 
@@ -88,6 +88,25 @@ namespace BridgeBuilder.Core.Tests
             Assert.Empty(split.UnsupportedMemberIds);
             Assert.Empty(split.UnsupportedPieces);
             Assert.True(split.HasSupportedMembers);
+        }
+
+        [Fact]
+        public void Partition_DropsFillsThatNameUnsupportedNodes()
+        {
+            SolverInput input = FloatingFrame(Constants.Scale.RoomToBridge);
+            Fill trussRoad = new Fill { Id = 1, NodeIds = new[] { 1, 5, 3 }, Road = true, Valid = true };
+            Fill floatingRoad = new Fill { Id = 2, NodeIds = new[] { 201, 202, 203 }, Road = true, Valid = true };
+            Fill spanningRoad = new Fill { Id = 3, NodeIds = new[] { 3, 4, 201 }, Road = true, Valid = true };
+            Fill trussPanel = new Fill { Id = 4, NodeIds = new[] { 5, 4, 3 }, Valid = true };
+            input.Fills = new[] { trussRoad, floatingRoad, spanningRoad, trussPanel };
+
+            SolverInput supported = SupportPartition.Split(input).SupportedInput;
+
+            Assert.Equal(new[] { trussRoad, trussPanel }, supported.Fills);
+            Assert.Equal(new[] { trussRoad, floatingRoad, spanningRoad, trussPanel }, input.Fills);
+            Assert.Throws<ArgumentException>(() => RoadValidation.Validate(supported.Nodes, input.Fills, 1, 2));
+            RoadValidationResult road = RoadValidation.Validate(supported.Nodes, supported.Fills, 1, 2);
+            Assert.NotNull(road);
         }
 
         [Fact]
@@ -271,6 +290,23 @@ namespace BridgeBuilder.Core.Tests
                     AssertZero(result.MemberForces[m]);
                 }
             }
+        }
+
+        [Fact]
+        public void StaticWrapper_PreviewRejectsInvalidUnsupportedPart()
+        {
+            var spy = new SpyStaticSolver(_ => throw new InvalidOperationException("The solver must not be called."));
+            var wrapper = new SupportedOnlyStaticSolver(spy);
+
+            SolverInput missingSection = FloatingFrame(Constants.Scale.RoomToBridge);
+            missingSection.Members[2] = new Member { Id = 11, NodeA = 101, NodeB = 102, SectionId = 9, LineId = 10 };
+            Assert.Throws<ArgumentException>(() => DeadLoadPreview.Run(missingSection, wrapper, () => false));
+
+            SolverInput infinitePosition = FloatingFrame(Constants.Scale.RoomToBridge);
+            infinitePosition.Nodes[1] = new Node { Id = 101, Position = new Vec3(double.PositiveInfinity, 0.6, 0) };
+            Assert.ThrowsAny<ArgumentException>(() => DeadLoadPreview.Run(infinitePosition, wrapper, () => false));
+
+            Assert.Equal(0, spy.CallCount);
         }
 
         [Fact]
