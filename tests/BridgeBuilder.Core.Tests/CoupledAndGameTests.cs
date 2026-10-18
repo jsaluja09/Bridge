@@ -29,8 +29,29 @@ namespace BridgeBuilder.Core.Tests
         public int MemberNodeB(int member) => _inner.MemberNodeB(member);
         public List<int> Rebuild(bool firstTime) => _inner.Rebuild(firstTime);
         public void SolveStatic(Vec3[] loads) => _inner.SolveStatic(loads);
-        public List<int> RemoveFailures(int maxPerStep) => _inner.RemoveFailures(maxPerStep);
-        public List<int> DetachAfterFailures() => _inner.DetachAfterFailures();
+        /// <summary>A member to break at the next failure check, whatever its utilization (-1: none).</summary>
+        public int ForceFail = -1;
+        bool _forced;
+
+        public List<int> RemoveFailures(int maxPerStep)
+        {
+            var failed = _inner.RemoveFailures(maxPerStep);
+            if (ForceFail >= 0 && _inner.Active[ForceFail])
+            {
+                _inner.Active[ForceFail] = false;
+                failed.Add(ForceFail);
+                _forced = true;
+            }
+            return failed;
+        }
+
+        public List<int> DetachAfterFailures()
+        {
+            if (!_forced)
+                return _inner.DetachAfterFailures();
+            _forced = false;
+            return _inner.Rebuild(false);
+        }
         public void Step(Vec3[] loads, double dt)
         {
             StepLoads.Add((Vec3[])loads.Clone());
@@ -213,6 +234,32 @@ namespace BridgeBuilder.Core.Tests
                 Assert.All(run.Coupled.Car.WheelLoads, l => Assert.True(double.IsFinite(l)));
                 Assert.True(double.IsFinite(run.Coupled.Car.Speed));
             }
+        }
+
+        [Fact]
+        public void SelfWeight_DropsBrokenMembers()
+        {
+            var (step, frame, _, bridge) = Make();
+            var input = bridge.Input;
+            int k = Enumerable.Range(0, input.Members.Count).First(i => !input.Members[i].HiddenBrace);
+            var all = DeadLoadPreview.SelfWeight(input, Constants.Loads.Gravity, 20);
+            var standing = Enumerable.Range(0, input.Members.Count).Select(i => i != k).ToArray();
+            var without = DeadLoadPreview.SelfWeight(input, Constants.Loads.Gravity, 20, standing);
+
+            // The car is parked on the pad, so the bridge carries only its own weight.
+            step.Step(new WheelLoad[0], 1.0 / 60, null);
+            Assert.Equal(all.Select(l => l.Force), frame.StepLoads[0]);
+
+            frame.ForceFail = k;
+            step.Step(new WheelLoad[0], 1.0 / 60, null);    // breaks member k after its solve
+            step.Step(new WheelLoad[0], 1.0 / 60, null);
+            Assert.Equal(without.Select(l => l.Force), frame.StepLoads[2]);
+
+            var m = input.Members[k];
+            var s = input.Sections.First(x => x.Id == m.SectionId);
+            double length = Vec3.Distance(input.Nodes.First(x => x.Id == m.NodeA).Position, input.Nodes.First(x => x.Id == m.NodeB).Position) * 20;
+            double lost = frame.StepLoads[2].Sum(f => f.Y) - frame.StepLoads[0].Sum(f => f.Y);
+            Assert.Equal(length * s.A * s.Density * Constants.Loads.Gravity, lost, 6);
         }
 
         [Fact]
