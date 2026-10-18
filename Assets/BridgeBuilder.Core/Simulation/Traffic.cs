@@ -105,6 +105,7 @@ namespace BridgeBuilder.Core
         readonly bool[] _fell;             // per slot, already counted as fallen
         readonly int[] _quota, _spawned;   // per lane
         readonly List<int>[] _queue;       // per lane, slots ordered front to back (reused every step)
+        bool _lanesFull;                   // no lane can take another car (all spawned, or queued back to the entry)
 
         public int Spawned { get; private set; }
         public int Crossed { get; private set; }
@@ -161,12 +162,14 @@ namespace BridgeBuilder.Core
         public void BeforeStep()
         {
             Order();
+            _lanesFull = true;
             for (int l = 0; l < _lanes.Length; l++)
             {
                 var queue = _queue[l];
                 bool clear = queue.Count == 0 || Gap(l, queue[queue.Count - 1]) >= Constants.Traffic.MinGapMeters;
                 if (_spawned[l] < _quota[l] && clear)
                     Spawn(l);
+                _lanesFull &= _spawned[l] >= _quota[l] || !clear;
             }
             Order();
             for (int l = 0; l < _lanes.Length; l++)
@@ -222,7 +225,7 @@ namespace BridgeBuilder.Core
                 allStopped &= Math.Abs(car.Speed) < Constants.Traffic.StoppedSpeed;
             }
 
-            if (_spec.Jam && allStopped && Spawned == Quota)
+            if (_spec.Jam && allStopped && _lanesFull)
                 JamHeldSeconds += dt;
         }
 
