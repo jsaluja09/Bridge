@@ -32,8 +32,8 @@ namespace BridgeBuilder.Core
         /// <summary>The one level: the standard car, calm air, and the level budget. TestPhases adds the weather and traffic.</summary>
         public static ChallengeConfig Level() => new ChallengeConfig
         {
-            Name = "Bridge the gap",
-            Brief = "Build a bridge that survives calm, wind, snow, traffic and a rush-hour jam.",
+            Name = "Bridge the canyon",
+            Brief = "The town across the canyon is cut off. Build the bridge that connects it, strong enough for wind, snow and a rush-hour jam.",
             Budget = Constants.Phases.LevelBudget,
         };
     }

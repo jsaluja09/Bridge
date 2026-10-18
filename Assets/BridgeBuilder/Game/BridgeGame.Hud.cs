@@ -57,8 +57,8 @@ namespace BridgeBuilder.Game
             {
                 Phase.Brief => BriefText(),
                 Phase.Place => _taps.Count == 0
-                    ? "Touch the spot where the bridge STARTS\nand pull the trigger"
-                    : "Now touch where the bridge ENDS\n<size=70%>X: undo</size>",
+                    ? "Touch where the road ends on THIS side of the canyon\nand pull the trigger"
+                    : "Now touch where the road starts again ACROSS the canyon\n<size=70%>The canyon follows your hand   ·   X: undo</size>",
                 Phase.Build => BuildText(),
                 Phase.Results => ResultsText(),
                 _ => TestText(),
