@@ -115,11 +115,15 @@ namespace BridgeBuilder.Game
             return $"{title}   {verdict}\n{snap.Message}\n<color=#FFD24A>{outcome.Tip}</color>{next}" + SolverStats();
         }
 
-        string ResultsText() => _resultsText;
+        string ResultsText()
+        {
+            string note = string.IsNullOrEmpty(ResultNote) ? "" : $"\n{ResultNote}";
+            return $"{_resultsText}{note}\n<size=70%>A: back to building</size>";
+        }
 
         /// <summary>
         /// Built once when the results appear (the stars are drawn above it): each phase's verdict, why the last
-        /// one failed, the advice, and what to press.
+        /// one failed, and the advice.
         /// </summary>
         string BuildResultsText()
         {
@@ -135,7 +139,7 @@ namespace BridgeBuilder.Game
             string summary = !last.Passed && _fx.Summary != null ? $"\n{_fx.Summary.Text}" : "";
             string point = _snapshot != null && _snapshot.WeakMember >= 0 ? "\n<size=70%>The flashing beam is the weakest spot.</size>" : "";
             return $"<b>{Stars} of {TestPhases.MaxStars} stars</b>\n<size=70%>{lines}</size>{summary}\n" +
-                   $"<color=#FFD24A>{last.Tip}</color>{point}\n<size=70%>A: back to building</size>";
+                   $"<color=#FFD24A>{last.Tip}</color>{point}";
         }
 
         string SolverStats()

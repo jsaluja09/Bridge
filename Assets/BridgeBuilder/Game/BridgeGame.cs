@@ -1,9 +1,26 @@
+using System;
 using System.Collections.Generic;
 using BridgeBuilder.Core;
 using UnityEngine;
 
 namespace BridgeBuilder.Game
 {
+    /// <summary>A finished test as its results appear, for anything that reacts to it (BridgeGame.TestFinished).</summary>
+    public sealed class TestOutcome
+    {
+        public ChallengeConfig Level { get; set; }
+        /// <summary>Every phase that ran, in order. The run values below are the last phase's.</summary>
+        public IReadOnlyList<PhaseOutcome> Phases { get; set; }
+        public RunConfiguration LastRun { get; set; }
+        public bool Passed { get; set; }
+        public int Stars { get; set; }
+        public int MembersLost { get; set; }
+        public double PeakUtilization { get; set; }
+        public double MaterialSpent { get; set; }
+        /// <summary>The last phase's failures, or null when nothing broke.</summary>
+        public FailureSummary Failures { get; set; }
+    }
+
     /// <summary>
     /// The game loop, kept simple for students (spec 11): read the level, tap the two ends of the bridge, hold
     /// the trigger to draw lines in the air, press A to test. The test runs in phases (calm, wind, snow, traffic,
@@ -59,11 +76,19 @@ namespace BridgeBuilder.Game
         int _runningIndex;
         string _resultsText = "";
         CompiledBridge _runBridge;
+        RunConfiguration _runConfig;
         RunSnapshot _snapshot;
         int _lastLost;
         float _phaseEndedAt = -1f;                // when the running phase's result came in, or -1
         float _resultsShownAt;
         int _bestStars;
+
+        /// <summary>Raised once per test, when its results appear.</summary>
+        public event Action<TestOutcome> TestFinished;
+        /// <summary>Raised when the player leaves a test or its results and goes back to building.</summary>
+        public event Action BackToBuilding;
+        /// <summary>One optional extra line on the results (TextMeshPro rich text); cleared on going back.</summary>
+        public string ResultNote { get; set; }
 
         int Stars => _sequence?.Stars ?? 0;
         static double Scale => Constants.Scale.RoomToBridge;
@@ -226,8 +251,8 @@ namespace BridgeBuilder.Game
             _runningPhase = _sequence.Current;
             _runningIndex = _sequence.Index;
             _runBridge = BridgeCompiler.Compile(_model.Copy(), _pads, Scale);
-            var config = _runningPhase.Configure(_level, _start, _pads[_start.Start].Across, Scale);
-            _worker.StartRun(_runBridge, config, _floor);
+            _runConfig = _runningPhase.Configure(_level, _start, _pads[_start.Start].Across, Scale);
+            _worker.StartRun(_runBridge, _runConfig, _floor);
             _fx.Begin(_runBridge, _floor);
             _canyonView.SetSnow(_runningPhase.Kind == PhaseKind.Snow);
             _canyonView.SetLights(false);
@@ -299,6 +324,18 @@ namespace BridgeBuilder.Game
             _resultsText = BuildResultsText();
             _canyonView.SetLights(Stars == TestPhases.MaxStars);     // the town lights up when it is connected
             _phase = Phase.Results;
+            TestFinished?.Invoke(new TestOutcome
+            {
+                Level = _level,
+                Phases = _sequence.Outcomes,
+                LastRun = _runConfig,
+                Passed = _sequence.Outcomes[_sequence.Outcomes.Count - 1].Passed,
+                Stars = Stars,
+                MembersLost = _snapshot?.MembersLost ?? 0,
+                PeakUtilization = _snapshot?.PeakUtilization ?? 0,
+                MaterialSpent = _model.Spent,
+                Failures = _fx.Summary,
+            });
         }
 
         void UpdateResults()
@@ -323,8 +360,10 @@ namespace BridgeBuilder.Game
             _canyonView.SetSnow(false);
             _canyonView.SetLights(_bestStars == TestPhases.MaxStars);
             HudMessages.Clear();
+            ResultNote = null;
             _snapshot = null;
             _phase = Phase.Build;
+            BackToBuilding?.Invoke();
         }
     }
 }
