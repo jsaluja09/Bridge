@@ -277,43 +277,64 @@ namespace BridgeBuilder.Core.Tests
         }
 
         [Fact]
-        public void Fall_WithCoupledStep_FallsInRoomUnits()
+        public void Fall_WithCoupledStep_MatchesTrussAlone()
         {
             const double scale = Constants.Scale.RoomToBridge;
-            SolverInput room = CoupledDeck(scale);
+            const int steps = 60;
+            SolverInput full = WithWeakMember2(CoupledDeck(scale));
+            SolverInput truss = WithWeakMember2(CoupledDeck(scale));
+            truss.Nodes = truss.Nodes.Where(n => !PieceNodeIds.Contains(n.Id)).ToArray();
+            truss.Members = truss.Members.Where(m => !PieceMemberIds.Contains(m.Id)).ToArray();
+            truss.Fills = truss.Fills.Where(f => f.Id != 2).ToArray();
             RunConfiguration configuration = Configuration();
             configuration.Car = CoupledCar();
             var fall = new UnsupportedFallSolver(new CoupledStep(CoupledStartCar(configuration.Car, scale)));
             var alone = new CoupledStep(CoupledStartCar(configuration.Car, scale));
-            SupportPartitionResult split = SupportPartition.Split(room);
+            Assert.Throws<InvalidOperationException>(() => new CoupledStep(CoupledStartCar(configuration.Car, scale)).Reset(full, configuration));
+            fall.Reset(full, configuration);
+            alone.Reset(truss, configuration);
 
-            Assert.Throws<InvalidOperationException>(() => new CoupledStep(CoupledStartCar(configuration.Car, scale)).Reset(room, configuration));
-            fall.Reset(room, configuration);
-            alone.Reset(split.SupportedInput, configuration);
             WheelLoad[] wheels = Array.Empty<WheelLoad>();
             WheelLoad[] aloneWheels = Array.Empty<WheelLoad>();
-            for (int n = 1; n <= Steps; n++)
+            var failed = new List<int>();
+            for (int n = 1; n <= steps; n++)
             {
                 StepOutput output = fall.Step(wheels, Dt, () => false);
                 StepOutput expected = alone.Step(aloneWheels, Dt, () => false);
-                wheels = output.CarState.WheelLoads;
-                aloneWheels = expected.CarState.WheelLoads;
+
+                for (int j = 0; j < truss.Nodes.Length; j++)
+                {
+                    int i = IndexOf(full, truss.Nodes[j].Id);
+                    Assert.Equal(expected.Displacements[j], output.Displacements[i]);
+                    Assert.Equal(expected.Rotations[j], output.Rotations[i]);
+                }
+
+                Assert.Equal(expected.FailedMemberIds, output.FailedMemberIds);
+                Assert.Equal(
+                    expected.MemberForces.Select(f => (f.MemberId, f.Axial, f.MomentLocalYAtA, f.MomentLocalZAtB, f.Utilization)),
+                    output.MemberForces.Where(f => !PieceMemberIds.Contains(f.MemberId)).Select(f => (f.MemberId, f.Axial, f.MomentLocalYAtA, f.MomentLocalZAtB, f.Utilization)));
+                Assert.All(output.MemberForces.Where(f => PieceMemberIds.Contains(f.MemberId)), AssertZero);
+                Assert.Equal(expected.CarState.Position, output.CarState.Position);
+                Assert.Equal(expected.CarState.Speed, output.CarState.Speed);
+                Assert.Equal(expected.CarState.WheelLoads.Select(w => (w.NormalLoad, w.Position)), output.CarState.WheelLoads.Select(w => (w.NormalLoad, w.Position)));
+
+                double t = n * Dt;
+                foreach (int id in PieceNodeIds)
+                {
+                    AssertRelative(-0.5 * Gravity * t * t / scale, output.Displacements[IndexOf(full, id)].Y, FallTolerance);
+                }
 
                 Assert.All(output.Displacements, v => AssertFinite(v, "Displacement"));
                 Assert.All(output.Rotations, v => AssertFinite(v, "Rotation"));
                 Assert.All(output.MemberForces, AssertFinite);
-                Assert.Equal(expected.CarState.Position, output.CarState.Position);
-                for (int j = 0; j < split.SupportedNodeIndices.Length; j++)
-                {
-                    Assert.Equal(expected.Displacements[j], output.Displacements[split.SupportedNodeIndices[j]]);
-                }
-
-                double t = n * Dt;
-                foreach (int id in new[] { 101, 102, 103, 201, 202, 203 })
-                {
-                    AssertRelative(-0.5 * Gravity * t * t / scale, output.Displacements[IndexOf(room, id)].Y, FallTolerance);
-                }
+                failed.AddRange(output.FailedMemberIds);
+                wheels = output.CarState.WheelLoads;
+                aloneWheels = expected.CarState.WheelLoads;
             }
+
+            // The front wheels have crossed the floating triangle's road fill without riding on it, and member 2 failed on the way.
+            Assert.True(wheels.Max(w => w.Position.X) > 3.0);
+            Assert.Equal(new[] { 2 }, failed);
         }
 
         [Fact]
@@ -348,6 +369,43 @@ namespace BridgeBuilder.Core.Tests
             Assert.All(output.MemberForces, AssertZero);
             Assert.Empty(output.FailedMemberIds);
             Assert.Null(output.CarState);
+        }
+
+        [Fact]
+        public void Fall_NullWheelLoads_RejectedWithoutEndingRun()
+        {
+            SolverInput input = RoomBridgeAdapter.ToBridge(FloatingFrame(Constants.Scale.RoomToBridge));
+            var spy = new SpyDynamicSolver();
+            var fall = new UnsupportedFallSolver(spy);
+            fall.Reset(input, Configuration());
+            fall.Step(Array.Empty<WheelLoad>(), Dt, () => false);
+            fall.Step(Array.Empty<WheelLoad>(), Dt, () => false);
+            int polls = 0;
+
+            Assert.Throws<ArgumentNullException>(() => fall.Step(null, Dt, () => ++polls > 0));
+
+            Assert.Equal(0, polls);
+            Assert.Equal(2, spy.StepCount);
+            AssertRelative(2 * Dt, fall.ElapsedSeconds, FallTolerance);
+            StepOutput next = fall.Step(Array.Empty<WheelLoad>(), Dt, () => false);
+            Assert.Equal(3, spy.StepCount);
+            double t = 3 * Dt;
+            AssertRelative(-0.5 * Gravity * t * t, next.Displacements[IndexOf(input, 101)].Y, FallTolerance);
+
+            SolverInput floating = RoomBridgeAdapter.ToBridge(FloatingFrame(Constants.Scale.RoomToBridge));
+            floating.Nodes = floating.Nodes.Where(n => !TrussNodeIds.Contains(n.Id)).ToArray();
+            floating.Members = floating.Members.Where(m => !TrussMemberIds.Contains(m.Id)).ToArray();
+            var unused = new SpyDynamicSolver { Respond = (_, __) => throw new InvalidOperationException("The solver must not be called.") };
+            var nothingSupported = new UnsupportedFallSolver(unused);
+            nothingSupported.Reset(floating, Configuration());
+
+            Assert.Throws<ArgumentNullException>(() => nothingSupported.Step(null, Dt, () => false));
+
+            Assert.Equal(0.0, nothingSupported.ElapsedSeconds);
+            StepOutput fallen = nothingSupported.Step(Array.Empty<WheelLoad>(), Dt, () => false);
+            AssertRelative(-0.5 * Gravity * Dt * Dt, fallen.Displacements[IndexOf(floating, 101)].Y, FallTolerance);
+            Assert.Equal(0, unused.ResetCount);
+            Assert.Equal(0, unused.StepCount);
         }
 
         [Fact]
@@ -527,6 +585,17 @@ namespace BridgeBuilder.Core.Tests
                 Sections = new[] { StandardSection() },
                 ScaleFactor = scale,
             };
+        }
+
+        // At 1/30 of the standard yield, member 2 sits near utilization 0.5 at rest and fails once the car is on its panel.
+        private static SolverInput WithWeakMember2(SolverInput input)
+        {
+            SectionProperties weak = StandardSection();
+            weak.Id = 2;
+            weak.YieldStrength /= 30.0;
+            input.Sections = input.Sections.Append(weak).ToArray();
+            input.Members = input.Members.Select(m => m.Id == 2 ? new Member { Id = 2, NodeA = m.NodeA, NodeB = m.NodeB, SectionId = 2, LineId = m.LineId } : m).ToArray();
+            return input;
         }
 
         private static CarParameters CoupledCar()

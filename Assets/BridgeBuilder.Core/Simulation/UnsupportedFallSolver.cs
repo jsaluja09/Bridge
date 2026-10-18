@@ -142,27 +142,36 @@ namespace BridgeBuilder.Core
         /// Advances <paramref name="dt"/> seconds. <paramref name="shouldCancel"/> is polled once, first; when
         /// it returns true nothing is stepped, <see cref="ElapsedSeconds"/> stays, and the previous output is
         /// returned. Otherwise the wrapped solver steps with <paramref name="previousWheelLoads"/> unchanged
-        /// and a cancel callback that always returns false. Before the first completed step the previous
-        /// output is the run at rest: zero displacements and rotations, a zero force for every member, no
-        /// failures, and a null car state.
+        /// and a cancel callback that always returns false. A cancel before the first completed step returns
+        /// the undeformed, unloaded frame with a null car state: zero displacements and rotations, a zero
+        /// force for every member, and no failures. That is not the wrapped solver's starting state, which
+        /// may already sag under self-weight.
         /// </summary>
         /// <returns>
         /// One displacement and rotation per node in input order; the forces of the standing members in
         /// input order, with zero forces for unsupported members; and the wrapped solver's failed member
         /// ids and car state, which are empty and null when no member is supported.
         /// </returns>
-        /// <exception cref="ArgumentNullException"><paramref name="shouldCancel"/> is null.</exception>
-        /// <exception cref="ArgumentOutOfRangeException"><paramref name="dt"/> is not positive and finite.</exception>
+        /// <exception cref="ArgumentNullException">
+        /// <paramref name="previousWheelLoads"/> or <paramref name="shouldCancel"/> is null, even when no member
+        /// is supported. The run can continue.
+        /// </exception>
+        /// <exception cref="ArgumentOutOfRangeException"><paramref name="dt"/> is not positive and finite. The run can continue.</exception>
         /// <exception cref="InvalidOperationException">
         /// <see cref="Reset"/> has not succeeded, the wrapped solver returned an output that does not match
-        /// the supported input, or the fall is no longer finite. After an exception from this step or the
-        /// wrapped one, the solver needs a new reset.
+        /// the supported input, or the fall is no longer finite. After an exception from the wrapped solver's
+        /// step or from checking its output, the solver needs a new reset.
         /// </exception>
         public StepOutput Step(WheelLoad[] previousWheelLoads, double dt, Func<bool> shouldCancel)
         {
             if (!ready)
             {
                 throw new InvalidOperationException("Reset the solver before stepping it.");
+            }
+
+            if (previousWheelLoads == null)
+            {
+                throw new ArgumentNullException(nameof(previousWheelLoads));
             }
 
             if (shouldCancel == null)
