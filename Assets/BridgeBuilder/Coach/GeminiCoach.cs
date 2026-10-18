@@ -52,8 +52,8 @@ namespace BridgeBuilder.Coach
                 Debug.Log($"Gemini coach is off: no key in Resources/{KeyResource}.txt");
                 yield break;
             }
-            // Install and BridgeBootstrap run in no fixed order, so the game may not exist yet. Behind the start
-            // menu the game's object stays inactive until Build is chosen, so look at inactive objects too.
+            // Install and BridgeBootstrap run in no fixed order, so the game may not exist yet. Under the start
+            // menu the game's object stays inactive until the player picks Build.
             for (int i = 0; i < FindGameFrames && _game == null; i++)
             {
                 _game = FindAnyObjectByType<BridgeGame>(FindObjectsInactive.Include);

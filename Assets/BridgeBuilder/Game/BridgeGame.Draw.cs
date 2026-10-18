@@ -354,14 +354,16 @@ namespace BridgeBuilder.Game
         [SerializeField] Color starColor = new Color(1f, 0.82f, 0.15f);
         [SerializeField] Color starOutlineColor = new Color(0.45f, 0.45f, 0.5f);
         [SerializeField] float starRadius = 0.045f;
+        [Tooltip("Extra space between the stars and the top of the results card.")]
+        [SerializeField] float starGap = 0.01f;                  // GUESS
 
-        /// <summary>Three stars above the results: earned ones fill in one after another, the rest stay outlines.</summary>
+        /// <summary>Three stars above the results card: earned ones fill in one after another, the rest stay outlines.</summary>
         void DrawStars()
         {
             var cam = Camera.main;
             if (cam == null)
                 return;
-            Vector3 center = HudAnchor(cam) + Vector3.up * 0.42f;         // just above the HUD text box (0.6 m tall)
+            Vector3 center = _card.TopCenter + Vector3.up * (starRadius + starGap);
             Vector3 toCam = cam.transform.position - center;
             Vector3 normal = Vector3.ProjectOnPlane(toCam, Vector3.up).normalized;
             Vector3 right = Vector3.Cross(Vector3.up, normal).normalized;

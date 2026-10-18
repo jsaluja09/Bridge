@@ -74,6 +74,8 @@ namespace BridgeBuilder.Game
         PhaseSequence _sequence;                  // the test in progress, or the last one
         TestPhase _runningPhase;
         int _runningIndex;
+        string _testHeader;                       // "Test 3 of 5 · Snow" for the running (or last) phase
+        string _resultsTitle = "";
         string _resultsText = "";
         CompiledBridge _runBridge;
         RunConfiguration _runConfig;
@@ -131,8 +133,8 @@ namespace BridgeBuilder.Game
                 case Phase.Testing: UpdateTesting(); break;
                 case Phase.Results: UpdateResults(); break;
             }
+            UpdateHud();                       // before Draw: the stars sit on this frame's card
             Draw();
-            UpdateHud();
             UpdateAudio();
         }
 
@@ -254,13 +256,14 @@ namespace BridgeBuilder.Game
         {
             _runningPhase = _sequence.Current;
             _runningIndex = _sequence.Index;
+            _testHeader = $"Test {_runningIndex + 1} of {TestPhases.All.Count} · {_runningPhase.Name}";
             _runBridge = BridgeCompiler.Compile(_model.Copy(), _pads, Scale);
             _runConfig = _runningPhase.Configure(_level, _start, _pads[_start.Start].Across, Scale);
             _worker.StartRun(_runBridge, _runConfig, _floor);
             _fx.Begin(_runBridge, _floor);
             _canyonView.SetSnow(_runningPhase.Kind == PhaseKind.Snow);
             _canyonView.SetLights(false);
-            HudMessages.Show(_runningPhase.Intro, passPauseSeconds + 1f);
+            HudMessages.Clear();                  // a passed phase's warnings don't carry into the next
             _snapshot = null;
             _lastLost = 0;
             _phaseEndedAt = -1f;
@@ -325,6 +328,7 @@ namespace BridgeBuilder.Game
         {
             _bestStars = Mathf.Max(_bestStars, Stars);
             _resultsShownAt = Time.time;
+            _resultsTitle = $"{Stars} of {TestPhases.MaxStars} stars";
             _resultsText = BuildResultsText();
             _canyonView.SetLights(Stars == TestPhases.MaxStars);     // the town lights up when it is connected
             _phase = Phase.Results;

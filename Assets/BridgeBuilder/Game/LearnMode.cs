@@ -1,6 +1,6 @@
 using System.Collections.Generic;
+using System.Linq;
 using BridgeBuilder.Core;
-using TMPro;
 using UnityEngine;
 
 namespace BridgeBuilder.Game
@@ -15,6 +15,8 @@ namespace BridgeBuilder.Game
     public sealed partial class LearnMode : MonoBehaviour
     {
         [SerializeField] float panelFontSize = 0.16f;
+        [Tooltip("Widest the card's text gets before it wraps, room meters.")]
+        [SerializeField] float panelTextWidth = 1.2f;                // GUESS
         [SerializeField] float labelFontSize = 0.12f;
         [Tooltip("Length of the tabletop each bridge is fitted to, room meters.")]
         [SerializeField] float tableLength = 1.5f;
@@ -22,31 +24,35 @@ namespace BridgeBuilder.Game
         /// <summary>Raised when the player leaves Learn mode (X on the bridge list).</summary>
         public event System.Action ExitRequested;
 
+        static readonly string PickerKeys = HudCard.Key("Stick", "Choose") + "   " + HudCard.Key("A", "Start") + "   " + HudCard.Key("X", "Menu");
+        static readonly string StepKeys = HudCard.Key("A", "Next") + "   " + HudCard.Key("B", "Back") + "   " + HudCard.Key("X", "Bridges");
+        static readonly string LastStepKeys = HudCard.Key("A", "Back to the bridges") + "   " + HudCard.Key("B", "Back") + "   " + HudCard.Key("X", "Bridges");
+
         ControllerPointer _pointer;
         BridgeView _view;
-        TextMeshPro _panel;
+        HudCard _card;
         LabelPool _labels;
         LessonPlayer _player;
         IReadOnlyList<Lesson> _lessons;
+        string[] _pickerRows;
         bool _inLesson;
         int _choice;
-        string _panelText = "";
-        int _panelFor = int.MinValue;   // which lesson step (or picker choice) the panel text was built for
+        HudCardContent _panelCard;
+        int _panelFor = int.MinValue;   // which lesson step (or picker choice) the card was built for
 
         void Awake()
         {
             _pointer = GetComponent<ControllerPointer>();
             _view = GetComponent<BridgeView>();
             _lessons = Lessons.All();
+            _pickerRows = _lessons.Select(l => $"{l.Title}   <size=75%>{l.Place}, {l.Year}</size>").ToArray();
             _player = new LessonPlayer(_lessons);
             _labels = new LabelPool(transform, labelFontSize);
 
-            var go = new GameObject("Lesson Panel");
+            var go = new GameObject("Lesson Card");
             go.transform.SetParent(transform, false);
-            _panel = go.AddComponent<TextMeshPro>();
-            _panel.alignment = TextAlignmentOptions.Center;
-            _panel.rectTransform.sizeDelta = new Vector2(1.5f, 0.5f);
-            _panel.fontSize = panelFontSize;
+            _card = go.AddComponent<HudCard>();
+            _card.MaxTextWidthMeters = panelTextWidth;
         }
 
         void OnEnable()
@@ -87,18 +93,15 @@ namespace BridgeBuilder.Game
             }
         }
 
-        string PickerText()
+        HudCardContent PickerCard() => new HudCardContent
         {
-            var text = new System.Text.StringBuilder("<b>Learn from famous bridges</b>\n\n");
-            for (int i = 0; i < _lessons.Count; i++)
-            {
-                var l = _lessons[i];
-                string line = $"{l.Title}  <size=70%>({l.Place}, {l.Year})</size>";
-                text.Append(i == _choice ? $"<color=#FFD24A>> {line} <</color>\n" : $"<color=#B0B0B0>{line}</color>\n");
-            }
-            text.Append("\n<size=70%>Stick: choose   ·   A: start   ·   X: menu</size>");
-            return text.ToString();
-        }
+            Kind = HudCardKind.Learn,
+            Page = -1,
+            Title = "Learn from famous bridges",
+            Choices = _pickerRows,
+            Selected = _choice,
+            Controls = PickerKeys,
+        };
 
         // ---------- A lesson ----------
 
@@ -120,31 +123,39 @@ namespace BridgeBuilder.Game
             }
         }
 
-        string StepText()
+        /// <summary>A lesson step: where it is in the lesson, what to read, its formula, and a bar of steps done.</summary>
+        HudCardContent StepCard(int page)
         {
             var lesson = _player.Lesson;
             var step = _player.Step;
-            string next = _player.AtLastStep ? "A: back to the bridges" : "A: next";
-            return $"<size=70%><color=#B0B0B0>{lesson.Title} · {lesson.Place}, {lesson.Year} · " +
-                   $"step {_player.StepIndex + 1} of {lesson.Steps.Count}</color></size>\n" +
-                   $"<b>{step.Title}</b>\n{step.Text}\n<color=#FFD24A>{step.Formula}</color>\n" +
-                   $"<size=60%>{next}   ·   B: back   ·   X: bridges</size>";
+            int count = lesson.Steps.Count, index = _player.StepIndex;
+            return new HudCardContent
+            {
+                Kind = HudCardKind.Learn,
+                Page = page,
+                Header = $"{lesson.Title} · {lesson.Place}, {lesson.Year}",
+                Title = step.Title,
+                Body = step.Text,
+                Formula = step.Formula,
+                BarLabel = $"Step {index + 1} of {count}",
+                BarFill = (index + 1) / (float)count,
+                Controls = _player.AtLastStep ? LastStepKeys : StepKeys,
+            };
         }
 
-        /// <summary>The panel above the table (or in front of you on the picker); its text is rebuilt only when the step changes.</summary>
+        /// <summary>The card above the table (or in front of you on the picker); its content is rebuilt only when the step or choice changes.</summary>
         void UpdatePanel(Camera cam)
         {
             int key = _inLesson ? _player.LessonIndex * 100 + _player.StepIndex : -1 - _choice;
             if (key != _panelFor)
             {
-                _panelText = _inLesson ? StepText() : PickerText();
-                _panel.text = _panelText;
+                _panelCard = _inLesson ? StepCard(key) : PickerCard();
                 _panelFor = key;
             }
+            _card.Show(_panelCard, panelFontSize);
             Vector3 forward = Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up).normalized;
             Vector3 at = _inLesson ? _table.Center + Vector3.up * 0.55f : cam.transform.position + forward * 0.9f;
-            _panel.transform.position = at;
-            _panel.transform.rotation = Quaternion.LookRotation(at - cam.transform.position, Vector3.up);
+            _card.transform.SetPositionAndRotation(at, Quaternion.LookRotation(at - cam.transform.position, Vector3.up));
         }
     }
 }
