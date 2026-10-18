@@ -20,6 +20,8 @@ namespace BridgeBuilder.Game
         [SerializeField] Color highlightColor = new Color(0.3f, 0.9f, 1f);
         [SerializeField] Color warningColor = new Color(1f, 0.2f, 0.25f);
         [SerializeField] Color floatingColor = new Color(0.85f, 0.2f, 0.85f);
+        [Tooltip("The shape a stroke will become, and the rail it snaps parallel to.")]
+        [SerializeField] Color ghostColor = new Color(0.45f, 1f, 0.55f);
         [Tooltip("Pieces that broke away and are falling.")]
         [SerializeField] Color fallingColor = new Color(0.62f, 0.58f, 0.52f);
 
@@ -104,6 +106,8 @@ namespace BridgeBuilder.Game
                 }
                 if (m.LineId == _hoverLine)
                     c = warningColor;
+                else if (_drawing && m.LineId == _strokeFx.PartnerLine)
+                    c = ghostColor;               // W4-04: the rail the new line is snapping parallel to
                 else if (blocked && _blockedMembers.Contains(m.Id))
                     c = Color.Lerp(c, warningColor, Pulse(8f));
                 _view.Tube(V(Node(input, m.NodeA)), V(Node(input, m.NodeB)), memberRadius, c, stripe);
@@ -125,14 +129,10 @@ namespace BridgeBuilder.Game
             if (_drawing && _stroke.Count > 0)
             {
                 for (int i = 2; i < _stroke.Count; i += 2)
-                    _view.Tube(_stroke[i - 2], _stroke[i], memberRadius * 0.7f, highlightColor);
-                _view.Tube(_stroke[_stroke.Count - 1], tip, memberRadius * 0.7f, highlightColor);
+                    _view.Tube(_stroke[i - 2], _stroke[i], memberRadius * 0.4f, highlightColor);
+                _view.Tube(_stroke[_stroke.Count - 1], tip, memberRadius * 0.4f, highlightColor);
             }
-            else if (Time.time < _rejectedUntil)
-            {
-                for (int i = 2; i < _rejected.Count; i += 2)
-                    _view.Tube(_rejected[i - 2], _rejected[i], memberRadius * 0.7f, warningColor);
-            }
+            _strokeFx.Draw(_view, memberRadius, ghostColor, warningColor, _drawing, Time.time);   // W4-04
         }
 
         CarPose _parked;

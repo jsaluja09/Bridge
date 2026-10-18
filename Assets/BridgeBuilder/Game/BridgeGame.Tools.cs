@@ -13,8 +13,7 @@ namespace BridgeBuilder.Game
     {
         bool _drawing;
         readonly List<Vector3> _stroke = new List<Vector3>();
-        readonly List<Vector3> _rejected = new List<Vector3>();
-        float _rejectedUntil;
+        readonly StrokeFeedback _strokeFx = new StrokeFeedback();
         Vector3? _hover;              // the dot (or pad / floor spot) a stroke would join here
         int _hoverLine = -1;
         List<int> _blockedMembers = new List<int>();
@@ -29,6 +28,7 @@ namespace BridgeBuilder.Game
         {
             _drawing = false;
             _stroke.Clear();
+            _strokeFx.Clear();
             _hover = null;
             _hoverLine = -1;
         }
@@ -42,12 +42,14 @@ namespace BridgeBuilder.Game
                 _drawing = true;
                 _stroke.Clear();
                 _stroke.Add(HoverPoint(tip) ?? tip);
+                _strokeFx.Clear();
                 _scheduler.NotifyDrawStarted();
             }
             else if (_drawing && _pointer.TriggerHeld)
             {
                 if (Vector3.Distance(_stroke[_stroke.Count - 1], tip) > 0.005f)
                     _stroke.Add(tip);
+                _strokeFx.UpdateGhost(_stroke, _model, Time.time);      // W4-04: ghost of the resolved, snapped shape
             }
             else if (_drawing)
             {
@@ -123,54 +125,69 @@ namespace BridgeBuilder.Game
             return null;
         }
 
+        /// <summary>
+        /// Builds the resolved shape (W4-04), not the raw stroke: one piece for a line or arc, one per side of a
+        /// polyline so its corners land exactly. A stroke that fits no shape flashes red with no message.
+        /// </summary>
         void FinishStroke()
         {
-            var raw = _stroke.Select(v => v.ToCore()).ToList();
-            var ctx = new FreeDraw.Context
+            var pieces = StrokeFeedback.Pieces(_stroke, _model);
+            if (pieces == null)
             {
-                Nodes = _model.Nodes,
-                Joined = (a, b) => _model.Members.Any(m => (m.NodeA == a && m.NodeB == b) || (m.NodeA == b && m.NodeB == a)),
-                Pads = _pads,
-                GroundDots = _groundDots,
-            };
-            var chains = FreeDraw.Build(raw, ctx, out _);
-            if (chains.Count == 0)
-            {
-                Reject("Draw a little longer");
+                Reject(null);
                 return;
             }
 
-            foreach (var chain in chains)
+            int added = 0;
+            foreach (var piece in pieces)
             {
-                var vertices = new List<LineVertex>(chain.Count);
-                foreach (var v in chain)
+                var ctx = new FreeDraw.Context
                 {
-                    if (v.IsExisting)
-                        vertices.Add(LineVertex.Existing(v.ExistingId));
-                    else if (v.NewSupport)
-                        vertices.Add(LineVertex.Existing(_model.AddFixedNode(v.Position, v.SurfaceId, v.Ground)));
-                    else
-                        vertices.Add(LineVertex.New(v.Position));
-                }
-                var result = _model.TryAddFreeLine(vertices);
-                if (!result.Ok)
+                    Nodes = _model.Nodes,
+                    Joined = (a, b) => _model.Members.Any(m => (m.NodeA == a && m.NodeB == b) || (m.NodeA == b && m.NodeB == a)),
+                    Pads = _pads,
+                    GroundDots = _groundDots,
+                };
+                foreach (var chain in FreeDraw.Build(piece, ctx, out _))
                 {
-                    Reject(result.Reason == EditReason.BudgetExceeded ? "Out of material. Delete or undo something first." : "That line didn't work. Try again.");
-                    return;
+                    var vertices = new List<LineVertex>(chain.Count);
+                    foreach (var v in chain)
+                    {
+                        if (v.IsExisting)
+                            vertices.Add(LineVertex.Existing(v.ExistingId));
+                        else if (v.NewSupport)
+                            vertices.Add(LineVertex.Existing(_model.AddFixedNode(v.Position, v.SurfaceId, v.Ground)));
+                        else
+                            vertices.Add(LineVertex.New(v.Position));
+                    }
+                    var result = _model.TryAddFreeLine(vertices);
+                    if (!result.Ok)
+                    {
+                        for (; added > 0; added--)
+                            _model.Undo();            // a polyline goes in whole or not at all
+                        Reject(result.Reason == EditReason.BudgetExceeded ? "Out of material. Delete or undo something first." : null);
+                        return;
+                    }
+                    added++;
                 }
             }
+            if (added == 0)
+            {
+                Reject(null);
+                return;
+            }
             _stroke.Clear();
+            _strokeFx.Clear();
             Play(snapClip);
             _scheduler.NotifyPaused();
         }
 
         void Reject(string message)
         {
-            Flash(message);
+            if (message != null)
+                Flash(message);
             Play(errorClip);
-            _rejected.Clear();
-            _rejected.AddRange(_stroke);
-            _rejectedUntil = Time.time + 1f;
+            _strokeFx.Reject(_stroke, Time.time);
             _stroke.Clear();
         }
 

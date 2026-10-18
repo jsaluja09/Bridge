@@ -237,3 +237,7 @@ There is no fill or road tool. Two lines that are each flat (under the road slop
 ### 11.4 Delete
 
 Squeezing grip while touching a line deletes it (blocked lines flash, as in 2.11). B undoes, X clears.
+
+### 11.5 Shape resolver
+
+Approved with the Group A drawing issues (W4-01 to W4-04); it replaces the last sentence of 11.1. Each stroke resolves to one of a finite set of shapes: a line, a circular arc, or a polyline of straight pieces (a triangle, zigzag or W). The clean shape is built, not the hand's path. A stroke that fits none of them (a scribble, a spiral, a stroke out of one plane, or one that crosses itself) is rejected: it flashes red and fades, with no message. A new line drawn nearly parallel to an existing rail at a drivable spacing snaps exactly parallel to it, so the pair always gets a deck.

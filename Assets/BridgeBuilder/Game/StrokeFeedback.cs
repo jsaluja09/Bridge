@@ -1,0 +1,98 @@
+using System.Collections.Generic;
+using System.Linq;
+using BridgeBuilder.Core;
+using UnityEngine;
+
+namespace BridgeBuilder.Game
+{
+    /// <summary>
+    /// What a stroke turns into (W4-04). While the trigger is held, a ghost shows the shape the stroke resolves to
+    /// (W4-01), already snapped parallel to its partner rail if it has one (W4-02). On release the resolved shape
+    /// is built, not the raw stroke; a stroke that fits no shape flashes red and fades. No HUD text here.
+    /// </summary>
+    public sealed class StrokeFeedback
+    {
+        const float GhostRefreshSeconds = 0.1f;   // GUESS: how often the ghost re-resolves while drawing
+        const float RejectSeconds = 1f;           // GUESS: how long a rejected stroke takes to fade
+
+        readonly List<Vector3> _rejected = new List<Vector3>();
+        float _rejectedAt = float.NegativeInfinity;
+        float _ghostAt = float.NegativeInfinity;
+        int _ghostSamples;
+        List<Vec3> _ghostPath;
+
+        /// <summary>The line the ghost is snapped to, or -1 (drawn highlighted so you see the pairing).</summary>
+        public int PartnerLine { get; private set; } = -1;
+
+        public void Clear()
+        {
+            _ghostPath = null;
+            PartnerLine = -1;
+            _ghostSamples = 0;
+        }
+
+        /// <summary>Resolves the stroke so far for the ghost, a few times a second.</summary>
+        public void UpdateGhost(List<Vector3> stroke, BridgeModel model, float now)
+        {
+            if (now - _ghostAt < GhostRefreshSeconds || stroke.Count == _ghostSamples)
+                return;
+            _ghostAt = now;
+            _ghostSamples = stroke.Count;
+            var shape = Resolve(stroke, model, out int partner);
+            _ghostPath = shape != null ? shape.Path(0.01) : null;
+            PartnerLine = partner;
+        }
+
+        /// <summary>
+        /// The finished stroke as straight or curved pieces ready for FreeDraw: one piece for a line or an arc,
+        /// one per side of a polyline so every corner lands exactly. Null if the stroke fits no shape.
+        /// </summary>
+        public static List<List<Vec3>> Pieces(List<Vector3> stroke, BridgeModel model)
+        {
+            var shape = Resolve(stroke, model, out _);
+            if (shape == null)
+                return null;
+            if (shape.Kind == ResolvedKind.Polyline)
+                return Enumerable.Range(0, shape.Points.Count - 1).Select(i => new List<Vec3> { shape.Points[i], shape.Points[i + 1] }).ToList();
+            return new List<List<Vec3>> { shape.Path(0.01) };
+        }
+
+        static ResolvedShape Resolve(List<Vector3> stroke, BridgeModel model, out int partner)
+        {
+            partner = -1;
+            var shape = ShapeResolver.Resolve(stroke.Select(v => v.ToCore()).ToList());
+            if (!shape.Valid)
+                return null;
+            var snapped = ParallelAssist.Snap(shape, model);
+            partner = snapped.PartnerLineId;
+            return snapped.Shape;
+        }
+
+        /// <summary>Shows a stroke that fits no shape in red, fading out.</summary>
+        public void Reject(List<Vector3> stroke, float now)
+        {
+            _rejected.Clear();
+            _rejected.AddRange(stroke);
+            _rejectedAt = now;
+            Clear();
+        }
+
+        public void Draw(BridgeView view, float radius, Color ghostColor, Color rejectColor, bool drawing, float now)
+        {
+            if (drawing && _ghostPath != null)
+            {
+                Color c = PartnerLine >= 0 ? ghostColor : Color.Lerp(ghostColor, Color.white, 0.5f);
+                for (int i = 1; i < _ghostPath.Count; i++)
+                    view.Tube(_ghostPath[i - 1].ToUnity(), _ghostPath[i].ToUnity(), radius * 0.6f, c);
+            }
+
+            float age = now - _rejectedAt;
+            if (age < RejectSeconds && _rejected.Count > 1)
+            {
+                float fade = 1f - age / RejectSeconds;
+                for (int i = 2; i < _rejected.Count; i += 2)
+                    view.Tube(_rejected[i - 2], _rejected[i], radius * 0.7f * fade, rejectColor);
+            }
+        }
+    }
+}
