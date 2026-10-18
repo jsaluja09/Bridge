@@ -61,6 +61,8 @@ namespace BridgeBuilder.Core
             public IReadOnlyList<Vec3> GroundDots = Array.Empty<Vec3>();
             /// <summary>Copy what is built across this plane; null builds the stroke alone.</summary>
             public MirrorPlane? Mirror;
+            /// <summary>The material (section id) of every line the stroke and its mirror copy make.</summary>
+            public int SectionId;
         }
 
         public static ShapedStroke Shape(IReadOnlyList<Vec3> stroke, BridgeModel model, Context ctx)
@@ -100,7 +102,7 @@ namespace BridgeBuilder.Core
             {
                 EditReason failure;
                 if (shaped.Copy == null)
-                    failure = Add(model, shaped.Chains, ref added);
+                    failure = Add(model, shaped.Chains, ctx.SectionId, ref added);
                 else
                     failure = AddPieces(model, shaped.CopyPieces(), ctx, ref added);
 
@@ -131,18 +133,18 @@ namespace BridgeBuilder.Core
         {
             foreach (var piece in pieces)
             {
-                var failure = Add(model, FreeDraw.Build(piece, DrawContext(model, ctx), out _), ref added);
+                var failure = Add(model, FreeDraw.Build(piece, DrawContext(model, ctx), out _), ctx.SectionId, ref added);
                 if (failure != EditReason.None)
                     return failure;
             }
             return EditReason.None;
         }
 
-        static EditReason Add(BridgeModel model, List<List<DrawVertex>> chains, ref int added)
+        static EditReason Add(BridgeModel model, List<List<DrawVertex>> chains, int sectionId, ref int added)
         {
             foreach (var chain in chains)
             {
-                var result = model.TryAddFreeLine(Vertices(model, chain));
+                var result = model.TryAddFreeLine(Vertices(model, chain), sectionId);
                 if (!result.Ok)
                     return result.Reason;
                 added++;

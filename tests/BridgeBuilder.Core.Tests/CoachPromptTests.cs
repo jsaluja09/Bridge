@@ -120,7 +120,7 @@ namespace BridgeBuilder.Core.Tests
                 Assert.Equal(invariant, german);
                 Assert.Contains("Vehicle: 1500 kg. Wind: 10.5 m/s. Tire grip: 0.35", german);
                 Assert.Contains("Highest load on any piece: 73%", german);
-                Assert.Contains("Material used: 12.4 of 16 m.", german);
+                Assert.Contains("Budget used: $12 of $16, for lines and road decks.", german);
                 Assert.DoesNotContain("10,5", german);
             }
             finally

@@ -199,13 +199,7 @@ namespace BridgeBuilder.Game
             _floor = (float)_canyon.FloorY;            // debris and fallen cars land on the canyon floor
             _groundDots = _canyon.FloorDots();
 
-            _model = new BridgeModel(new BudgetPolicy
-            {
-                CostPerMeter = Constants.Budget.CostPerMeter,
-                CostPerSquareMeter = Constants.Budget.CostPerSquareMeter,
-                MaterialBudget = _level.Budget,
-                NodeCap = Constants.Human.NodeCap + Constants.Draw.SupportNodeAllowance,
-            });
+            _model = new BridgeModel(BudgetPolicy.ForMaterials(_level.Budget, Constants.Human.NodeCap + Constants.Draw.SupportNodeAllowance));
             _start = new StartSurfaceChoice(0, 1);
             _bridge = null;
             _preview = null;
@@ -234,6 +228,9 @@ namespace BridgeBuilder.Game
         }
 
         bool PreviewCurrent => _preview != null && _previewBridge == _bridge;
+
+        /// <summary>What the bridge costs: its lines plus the decks they make.</summary>
+        double TotalSpent(CompiledBridge bridge) => _model.Spent + bridge.DeckCost(_model.Policy);
 
         void StartTest()
         {
@@ -340,7 +337,7 @@ namespace BridgeBuilder.Game
                 Stars = Stars,
                 MembersLost = _snapshot?.MembersLost ?? 0,
                 PeakUtilization = _snapshot?.PeakUtilization ?? 0,
-                MaterialSpent = _model.Spent,
+                MaterialSpent = TotalSpent(_runBridge),
                 Failures = _fx.Summary,
             });
         }

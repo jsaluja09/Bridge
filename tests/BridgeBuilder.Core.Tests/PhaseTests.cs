@@ -258,7 +258,8 @@ namespace BridgeBuilder.Core.Tests
         {
             var pads = Rooms.Pads();
             var truss = Rooms.Truss(pads);
-            Assert.True(truss.Spent <= Constants.Phases.LevelBudget, $"the test truss costs {truss.Spent:F1}");
+            double cost = truss.Spent + BridgeCompiler.Compile(truss, pads, Scale).DeckCost(truss.Policy);
+            Assert.True(cost <= Constants.Phases.LevelBudget, $"the test truss costs {cost:F1}");
 
             var seq = RunAll(truss, pads);
 

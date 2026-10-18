@@ -8,7 +8,7 @@ namespace BridgeBuilder.Core.Tests
     public class BridgeModelTests
     {
         static BudgetPolicy Policy(double perMeter = 1, double perSquare = 1, double budget = 1000, int cap = 1000) =>
-            new BudgetPolicy { CostPerMeter = perMeter, CostPerSquareMeter = perSquare, MaterialBudget = budget, NodeCap = cap };
+            BudgetPolicy.Uniform(perMeter, perSquare, budget, cap);
 
         static LineVertex E(int id) => LineVertex.Existing(id);
         static LineVertex N(double x, double y, double z) => LineVertex.New(new Vec3(x, y, z));
@@ -17,10 +17,23 @@ namespace BridgeBuilder.Core.Tests
         public void DefaultPolicy_CopiesBudgetConstantsAndNodeCap()
         {
             var p = BudgetPolicy.Default;
-            Assert.Equal(Constants.Budget.CostPerMeter, p.CostPerMeter);
-            Assert.Equal(Constants.Budget.CostPerSquareMeter, p.CostPerSquareMeter);
+            Assert.Equal(Constants.Budget.WoodCostPerMeter, p.LineCost((int)BridgeMaterial.Wood));
+            Assert.Equal(Constants.Budget.CableCostPerMeter, p.LineCost((int)BridgeMaterial.Cable));
+            Assert.Equal(Constants.Budget.ConcreteCostPerMeter, p.LineCost((int)BridgeMaterial.Concrete));
+            Assert.Equal(Constants.Wood.DeckCostPerSquareMeter, p.AreaCost((int)BridgeMaterial.Wood));
+            Assert.Equal(Constants.Concrete.DeckCostPerSquareMeter, p.AreaCost((int)BridgeMaterial.Concrete));
             Assert.Equal(Constants.Budget.MaterialBudget, p.MaterialBudget);
             Assert.Equal(150, p.NodeCap);
+        }
+
+        [Fact]
+        public void UniformPolicy_PricesEveryMaterialAlike()
+        {
+            var p = BudgetPolicy.Uniform(2, 3, 40, 7);
+            Assert.All(Materials.All, x => Assert.Equal(2, p.LineCost((int)x)));
+            Assert.All(Materials.All, x => Assert.Equal(3, p.AreaCost((int)x)));
+            Assert.Equal(40, p.MaterialBudget);
+            Assert.Equal(7, p.NodeCap);
         }
 
         [Fact]

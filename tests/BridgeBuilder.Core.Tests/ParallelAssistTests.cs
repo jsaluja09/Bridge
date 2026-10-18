@@ -10,10 +10,7 @@ namespace BridgeBuilder.Core.Tests
     {
         const double Top = 0.75;
 
-        static BridgeModel Model() => new BridgeModel(new BudgetPolicy
-        {
-            CostPerMeter = 1, CostPerSquareMeter = 1, MaterialBudget = 500, NodeCap = 500,
-        });
+        static BridgeModel Model() => new BridgeModel(BudgetPolicy.Uniform(1, 1, 500, 500));
 
         /// <summary>Adds a straight line from a to b with dots every ~10 cm, as the game would.</summary>
         static int AddStraight(BridgeModel m, Vec3 a, Vec3 b) =>

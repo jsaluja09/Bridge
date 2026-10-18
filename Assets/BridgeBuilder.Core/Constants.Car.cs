@@ -21,7 +21,7 @@ namespace BridgeBuilder.Core
             public const double FrontArea = 0.625;          // m^2, a quarter (half size squared), GUESS
             public const double DragCoefficient = 1.0;      // GUESS
             public const double MemberDragCoefficient = 1.2;// GUESS, round tube in cross-flow
-            public const double MemberDiameter = 0.2;       // m exposed to wind, GUESS (matches the section's 0.1 m fiber)
+            public const double MemberDiameter = 0.2;       // m exposed to wind, GUESS (the wood section's width), same for every material
             public const double AirDensity = 1.225;         // kg/m^3, DERIVED (sea level)
             public const double FallSeconds = 0.5;          // airborne this long counts as falling, GUESS
             public const double TimeoutSeconds = 30;        // GUESS

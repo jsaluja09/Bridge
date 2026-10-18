@@ -8,7 +8,7 @@ namespace BridgeBuilder.Core
 {
     /// <summary>
     /// What the coach is told about one finished test (spec 11.7). The car, wind, grip, load and message are from
-    /// the last phase that ran. Material is in room meters of line.
+    /// the last phase that ran. Material is in budget price units: the lines plus the decks they make.
     /// </summary>
     public sealed class CoachFacts
     {
@@ -60,7 +60,7 @@ namespace BridgeBuilder.Core
             lines.Add(Invariant($"Vehicle: {facts.CarWeightKg:0} kg. Wind: {facts.WindSpeed:0.#} m/s. Tire grip: {facts.Grip:0.##} (lower is more slippery)."));
             lines.Add(Invariant($"Result: {(facts.Passed ? "PASSED" : "FAILED")}, {facts.Stars} of {TestPhases.MaxStars} stars. {facts.Message}"));
             lines.Add(Invariant($"Pieces broken: {facts.MembersLost}. Highest load on any piece: {facts.PeakUtilization * 100:0}% of what it can hold (100% breaks it)."));
-            lines.Add(Invariant($"Material used: {facts.MaterialSpent:0.#} of {facts.Budget:0.#} m."));
+            lines.Add(Invariant($"Budget used: ${facts.MaterialSpent:0} of ${facts.Budget:0}, for lines and road decks."));
             var failures = facts.Failures;
             if (failures != null)
             {

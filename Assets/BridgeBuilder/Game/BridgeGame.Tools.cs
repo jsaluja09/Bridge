@@ -7,10 +7,14 @@ namespace BridgeBuilder.Game
 {
     /// <summary>
     /// Building input (spec 11.1, 11.4): hold the trigger to draw a line anywhere, release to place it;
-    /// squeeze grip on a line to delete it; B undoes, X clears, Y turns mirroring across the road on and off.
+    /// flick the stick to change material; squeeze grip on a line to delete it; B undoes, X clears, Y turns
+    /// mirroring across the road on and off.
     /// </summary>
     public sealed partial class BridgeGame
     {
+        const string OutOfMaterial = "Out of material. Delete or undo something first.";
+
+        BridgeMaterial _material = BridgeMaterial.Wood;     // what new lines are made of
         bool _drawing;
         bool _mirror = true;          // copy each beam across the road's centerline
         readonly List<Vector3> _stroke = new List<Vector3>();
@@ -64,6 +68,14 @@ namespace BridgeBuilder.Game
             _hover = HoverPoint(tip);
             _hoverLine = _drawing ? -1 : PickLine(tip.ToCore());
 
+            if (_pointer.StickStep != 0 && !_drawing)
+            {
+                int count = Materials.All.Length;
+                int next = System.Array.IndexOf(Materials.All, _material) + _pointer.StickStep;
+                _material = Materials.All[(next % count + count) % count];
+                Play(snapClip);
+            }
+
             if (_pointer.GripPressed && !_drawing)
                 DeleteHovered();
 
@@ -104,6 +116,7 @@ namespace BridgeBuilder.Game
             Pads = _pads,
             GroundDots = _groundDots,
             Mirror = _mirror ? MirrorPlane.Centerline(_pads[0], _pads[1]) : (MirrorPlane?)null,
+            SectionId = (int)_material,
         };
 
         FreeDraw.Context DrawContext() => StrokeBuilder.DrawContext(_model, StrokeContext());
@@ -120,8 +133,9 @@ namespace BridgeBuilder.Game
 
         /// <summary>
         /// Builds what the stroke turns into (W4-04): FreeDraw's chains (a squiggle becomes a straight beam), or the
-        /// shifted copy of the line it was drawn beside (W4-02), plus its mirror copy across the road. It goes in whole
-        /// or not at all, as one undo step.
+        /// shifted copy of the line it was drawn beside (W4-02), plus its mirror copy across the road, all in the
+        /// current material. It goes in whole or not at all, as one undo step, and comes back out if the lines plus
+        /// the decks they make cost more than the budget.
         /// </summary>
         void FinishStroke()
         {
@@ -134,9 +148,23 @@ namespace BridgeBuilder.Game
             }
 
             var result = StrokeBuilder.Build(_model, shaped, ctx);
+            if (result.Ok)
+            {
+                var compiled = BridgeCompiler.Compile(_model, _pads, Scale);
+                if (TotalSpent(compiled) > _model.Policy.MaterialBudget + 1e-9)
+                {
+                    _model.Undo();
+                    _scheduler.NotifyPaused();
+                    result = new StrokeResult(0, EditReason.BudgetExceeded);
+                }
+                else
+                {
+                    _bridge = compiled;
+                }
+            }
             if (!result.Ok)
             {
-                Reject(result.Reason == EditReason.BudgetExceeded ? "Out of material. Delete or undo something first." : "That line didn't work. Try again.");
+                Reject(result.Reason == EditReason.BudgetExceeded ? OutOfMaterial : "That line didn't work. Try again.");
                 return;
             }
             _stroke.Clear();

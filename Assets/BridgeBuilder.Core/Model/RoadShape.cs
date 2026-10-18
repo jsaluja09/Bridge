@@ -17,9 +17,9 @@ namespace BridgeBuilder.Core
 
     /// <summary>
     /// Road shapes (W4-03): a paired left and right rail treated as one road. Pairing adds a cross beam between
-    /// each matching pair of dots on the two rails and the automatic deck (AutoDeck), paying for beams and deck
-    /// through the model's budget. Deleting either rail takes its cross beams and deck with it. Each of these is
-    /// one action for Undo, though the model records it as several edits.
+    /// each matching pair of dots on the two rails and the automatic deck (AutoDeck), both in the deck's material,
+    /// paying for beams and deck through the model's budget. Deleting either rail takes its cross beams and deck
+    /// with it. Each of these is one action for Undo, though the model records it as several edits.
     /// </summary>
     public sealed class RoadShapes
     {
@@ -42,11 +42,12 @@ namespace BridgeBuilder.Core
                 return EditResult.Fail(EditReason.InvalidLine);
 
             var pairs = MatchingDots(railA, railB);
+            int deckSection = (int)Materials.DeckMaterial(Materials.Of(_model.LineSection(railA)), Materials.Of(_model.LineSection(railB)));
             int before = _model.UndoDepth;
             var road = new Road { RailA = railA, RailB = railB };
             foreach (var (a, b) in pairs)
             {
-                var beam = _model.TryAddFreeLine(new[] { LineVertex.Existing(a), LineVertex.Existing(b) });
+                var beam = _model.TryAddFreeLine(new[] { LineVertex.Existing(a), LineVertex.Existing(b) }, deckSection);
                 if (!beam.Ok)
                     return Rollback(before, beam);
                 road.CrossBeams.Add(beam.Id);
@@ -56,7 +57,7 @@ namespace BridgeBuilder.Core
                 (d.LineA == railA && d.LineB == railB) || (d.LineA == railB && d.LineB == railA));
             if (deck == null)
                 return Rollback(before, EditResult.Fail(EditReason.InvalidLine));
-            var fill = _model.TryAddFill(deck.Loop, road: true);
+            var fill = _model.TryAddFill(deck.Loop, road: true, sectionId: deck.SectionId);
             if (!fill.Ok)
                 return Rollback(before, fill);
             road.DeckFillId = fill.Id;

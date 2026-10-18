@@ -84,16 +84,17 @@ namespace BridgeBuilder.Game
 
         string BriefText() =>
             $"<b>{_level.Name}</b>\n{_level.Brief}\n" +
-            $"Material {_level.Budget:F0} m   ·   Tests: {PhaseNames}\n" +
+            $"Budget ${_level.Budget:F0}   ·   Tests: {PhaseNames}\n" +
             "<size=70%>A: start   ·   X: menu</size>";
 
         string BuildText()
         {
-            string material = $"Material {_model.Spent:F1} / {_level.Budget:F0} m";
+            string material = $"{Materials.Name(_material)}  ${Materials.CostPerMeter(_material):F0}/m   ·   " +
+                              $"Spent ${TotalSpent(_bridge):F0} / ${_level.Budget:F0}";
             string road = _bridge.Road.Ok ? "<color=#5CE65C>Road ready</color>" : "Road: draw two flat lines side by side, pad to pad";
             string best = _bestStars > 0 ? $"   ·   <color=#FFD24A>Best: {_bestStars} of {TestPhases.MaxStars} stars</color>" : "";
             string text = $"{material}   ·   {road}{best}\n" +
-                          "<size=70%>Hold trigger: draw   ·   Grip on a line: delete   ·   A: test   ·   B: undo   ·   X: clear   ·   Y: mirror " + (_mirror ? "<b>on</b>" : "off") + "</size>";
+                          "<size=70%>Hold trigger: draw   ·   Stick: material   ·   Grip on a line: delete   ·   A: test   ·   B: undo   ·   X: clear   ·   Y: mirror " + (_mirror ? "<b>on</b>" : "off") + "</size>";
             if (PreviewCurrent)
                 text += "\n<size=60%>Colors show how hard the bridge works to hold itself up</size>";
             return text + SolverStats();

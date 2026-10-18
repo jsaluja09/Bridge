@@ -5,7 +5,7 @@ namespace BridgeBuilder.Game
 {
     /// <summary>
     /// Right controller tip and the game's few buttons, read straight from the Input System (spec 11):
-    /// trigger = draw, grip = delete, A = test, B = undo, stick = choose a challenge; left X = clear, Y = mirror
+    /// trigger = draw, grip = delete, A = test, B = undo, stick = material; left X = clear, Y = mirror
     /// on/off. Keyboard fallbacks help when testing over Link.
     /// </summary>
     public sealed class ControllerPointer : MonoBehaviour
