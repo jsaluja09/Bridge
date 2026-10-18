@@ -154,7 +154,8 @@ namespace BridgeBuilder.Game
                 return;
             }
 
-            var result = AddStroke(pieces);
+            var ctx = new StrokeBuilder.Context { Pads = _pads, GroundDots = _groundDots, Mirror = MirrorPlaneNow, SectionId = (int)_material };
+            var result = StrokeBuilder.Build(_model, pieces, ctx);
             if (result.Ok)
             {
                 var compiled = BridgeCompiler.Compile(_model, _pads, Scale);
@@ -178,75 +179,6 @@ namespace BridgeBuilder.Game
             _strokeFx.Clear();
             Play(snapClip);
             _scheduler.NotifyPaused();
-        }
-
-        /// <summary>
-        /// StrokeBuilder.Build in the chosen material: each piece, then its mirror copy, goes through FreeDraw, and
-        /// the whole stroke is one undo step that goes in whole or not at all.
-        /// </summary>
-        StrokeResult AddStroke(List<List<Vec3>> pieces)
-        {
-            var all = new List<IReadOnlyList<Vec3>>(pieces);
-            var mirror = MirrorPlaneNow;
-            if (mirror.HasValue)
-            {
-                foreach (var piece in pieces)
-                {
-                    var copy = MirrorAssist.Mirror(piece, mirror.Value);
-                    if (copy != null)
-                        all.Add(copy);
-                }
-            }
-
-            int added = 0;
-            _model.BeginGroup();
-            try
-            {
-                foreach (var piece in all)
-                {
-                    var draw = new FreeDraw.Context { Nodes = _model.Nodes, Joined = JoinedLookup(), Pads = _pads, GroundDots = _groundDots };
-                    foreach (var chain in FreeDraw.Build(piece, draw, out _))
-                    {
-                        var result = _model.TryAddFreeLine(LineVertices(chain), (int)_material);
-                        if (!result.Ok)
-                        {
-                            if (added > 0)
-                                _model.Undo();          // the group saved one snapshot before its first line
-                            return new StrokeResult(0, result.Reason);
-                        }
-                        added++;
-                    }
-                }
-            }
-            finally
-            {
-                _model.EndGroup();
-            }
-            return new StrokeResult(added, EditReason.None);
-        }
-
-        List<LineVertex> LineVertices(List<DrawVertex> chain)
-        {
-            var vertices = new List<LineVertex>(chain.Count);
-            foreach (var v in chain)
-            {
-                if (v.IsExisting)
-                    vertices.Add(LineVertex.Existing(v.ExistingId));
-                else if (v.NewSupport)
-                    vertices.Add(LineVertex.Existing(_model.AddFixedNode(v.Position, v.SurfaceId, v.Ground)));
-                else
-                    vertices.Add(LineVertex.New(v.Position));
-            }
-            return vertices;
-        }
-
-        /// <summary>"Are these two nodes already joined?" from one pass over the members (FreeDraw asks per segment).</summary>
-        System.Func<int, int, bool> JoinedLookup()
-        {
-            var joined = new HashSet<(int, int)>();
-            foreach (var m in _model.Members)
-                joined.Add(m.NodeA < m.NodeB ? (m.NodeA, m.NodeB) : (m.NodeB, m.NodeA));
-            return (a, b) => joined.Contains(a < b ? (a, b) : (b, a));
         }
 
         void Reject(string message)
