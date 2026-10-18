@@ -71,7 +71,7 @@ namespace BridgeBuilder.Game
             {
                 double t = _player.StepTime(now);
                 DrawBridge(now, t);
-                DrawDemo(t);
+                DrawDemo(t, cam);
                 DrawLabels(now, cam);
                 DrawPlot(cam);
                 DrawScaleBar(cam);
@@ -135,8 +135,8 @@ namespace BridgeBuilder.Game
         Vector3 Place(LessonPart part, Vec3 p, LoadDemo demo, double t) =>
             _table.Place(LessonMotion.Displace(_player.Lesson.Bridge, part, p, demo, t));
 
-        /// <summary>Traffic as small colored cars riding the sagging deck, or wind as streaks blowing across.</summary>
-        void DrawDemo(double t)
+        /// <summary>Traffic as small colored cars riding the sagging deck, wind as streaks blowing across, or the temperature.</summary>
+        void DrawDemo(double t, Camera cam)
         {
             var bridge = _player.Lesson.Bridge;
             switch (_player.Step.Demo)
@@ -158,8 +158,21 @@ namespace BridgeBuilder.Game
                         _view.Tube(_table.Place(tail), _table.Place(head), minRadius * 0.6f, new Color(0.85f, 0.92f, 1f));
                     }
                     break;
+                case LoadDemo.Temperature:
+                    int degrees = (int)Math.Round(LessonMotion.TemperatureChange(t));
+                    if (degrees != _shownDegrees)
+                    {
+                        _degreesText = degrees > 0 ? $"+{degrees} °C: steel grows" : degrees < 0 ? $"{degrees} °C: steel shrinks" : "0 °C";
+                        _shownDegrees = degrees;
+                    }
+                    Color warmth = Color.Lerp(pullColor, pushColor, 0.5f + degrees / (float)(2 * LessonMotion.TemperatureSwing));
+                    _labels.Show(_degreesText, _table.Center + Vector3.up * 0.42f, cam, warmth);
+                    break;
             }
         }
+
+        int _shownDegrees = int.MinValue;   // the temperature the label was last written for
+        string _degreesText = "";
 
         /// <summary>Each label above its part (stacked so they don't overlap), with a thin line down to it, once the part is built.</summary>
         void DrawLabels(double now, Camera cam)

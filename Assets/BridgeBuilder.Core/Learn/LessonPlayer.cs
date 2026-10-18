@@ -143,28 +143,84 @@ namespace BridgeBuilder.Core
         /// <summary>Where a point of a part is drawn during a demo at `time`.</summary>
         public static Vec3 Displace(LessonBridge b, LessonPart part, Vec3 p, LoadDemo demo, double time)
         {
-            if (!part.Flexible || p.X <= b.MainSpanStart || p.X >= b.MainSpanEnd)
-                return p;
-            double u = (p.X - b.MainSpanStart) / b.MainSpan;      // 0..1 across the main span
-            double shape = Math.Sin(Math.PI * u);                  // zero at the towers, most in the middle
             switch (demo)
             {
-                case LoadDemo.Cars:
-                    // Each car pulls the span down most when it is in the middle. Evenly spread cars average 2/pi of
-                    // their peak, so pi/(2 Cars) scales a full span of traffic to the bridge's real live-load sag.
-                    double sag = 0;
-                    for (int c = 0; c < Cars; c++)
-                    {
-                        double uc = (CarAlong(b, c, time) - b.MainSpanStart) / b.MainSpan;
-                        sag += Math.Sin(Math.PI * uc);
-                    }
-                    return p - Vec3.UnitY * (b.LiveLoadSag * Exaggeration * shape * sag * Math.PI / (2 * Cars));
-                case LoadDemo.Wind:
-                    double sway = Math.Sin(2 * Math.PI * time / SwayPeriodSeconds);
-                    return p + Vec3.UnitZ * (b.WindSway * Exaggeration * shape * sway);
-                default:
-                    return p;
+                case LoadDemo.Cars: return Sag(b, part, p, time);
+                case LoadDemo.Wind: return Sway(b, part, p, time);
+                case LoadDemo.Temperature: return Expand(b, part, p, time);
+                case LoadDemo.Bascules: return Lift(part, p, time);
+                default: return p;
             }
+        }
+
+        /// <summary>0..1 across the main span, and the span's sine shape there (zero at the ends); false outside it.</summary>
+        static bool InMainSpan(LessonBridge b, LessonPart part, Vec3 p, out double shape)
+        {
+            shape = 0;
+            if (!part.Flexible || p.X <= b.MainSpanStart || p.X >= b.MainSpanEnd)
+                return false;
+            shape = Math.Sin(Math.PI * (p.X - b.MainSpanStart) / b.MainSpan);
+            return true;
+        }
+
+        /// <summary>
+        /// Traffic: each car pulls the span down most when it is in the middle. Evenly spread cars average 2/pi of
+        /// their peak, so pi/(2 Cars) scales a full span of traffic to the bridge's real live-load sag.
+        /// </summary>
+        static Vec3 Sag(LessonBridge b, LessonPart part, Vec3 p, double time)
+        {
+            if (!InMainSpan(b, part, p, out double shape))
+                return p;
+            double sag = 0;
+            for (int c = 0; c < Cars; c++)
+                sag += Math.Sin(Math.PI * (CarAlong(b, c, time) - b.MainSpanStart) / b.MainSpan);
+            return p - Vec3.UnitY * (b.LiveLoadSag * Exaggeration * shape * sag * Math.PI / (2 * Cars));
+        }
+
+        static Vec3 Sway(LessonBridge b, LessonPart part, Vec3 p, double time)
+        {
+            if (!InMainSpan(b, part, p, out double shape))
+                return p;
+            return p + Vec3.UnitZ * (b.WindSway * Exaggeration * shape * Math.Sin(2 * Math.PI * time / SwayPeriodSeconds));
+        }
+
+        public const double ThermalExaggeration = 100;
+        public const double SteelExpansion = 12e-6;      // per °C
+        public const double TemperatureSwing = 20;       // °C either side of the day's average
+        public const double DaySeconds = 6;              // one warm-and-cool cycle in the demo
+
+        /// <summary>The demo's temperature change from average at `time`, °C.</summary>
+        public static double TemperatureChange(double time) => TemperatureSwing * Math.Sin(2 * Math.PI * time / DaySeconds);
+
+        /// <summary>
+        /// Heat: a flexible part grows away from the bridge's thermal center by α·ΔT per meter. Points at or above the
+        /// deck move fully; below it, a pier bends over its top ThermalFlexHeight meters, more the closer to the deck.
+        /// </summary>
+        static Vec3 Expand(LessonBridge b, LessonPart part, Vec3 p, double time)
+        {
+            if (!part.Flexible)
+                return p;
+            double reach = 1;
+            if (p.Y < b.DeckY)
+                reach = b.ThermalFlexHeight > 0 ? Math.Max(0, 1 - (b.DeckY - p.Y) / b.ThermalFlexHeight) : 0;
+            double dx = (p.X - b.ThermalCenter) * SteelExpansion * TemperatureChange(time) * ThermalExaggeration * reach;
+            return p + Vec3.UnitX * dx;
+        }
+
+        public const double BasculeSeconds = 10;         // one lift and lower in the demo
+        public const double BasculeDegrees = 86;         // how far Tower Bridge's leaves open
+
+        /// <summary>How far the leaves are open at `time`, degrees: up and back down, easing at both ends.</summary>
+        public static double BasculeAngle(double time) => BasculeDegrees * 0.5 * (1 - Math.Cos(2 * Math.PI * time / BasculeSeconds));
+
+        /// <summary>A leaf (a part with a pivot) turns about its pivot: Turn +1 lifts its far end over +x, -1 over -x.</summary>
+        static Vec3 Lift(LessonPart part, Vec3 p, double time)
+        {
+            if (!part.Pivot.HasValue)
+                return p;
+            double a = part.Turn * BasculeAngle(time) * Math.PI / 180;
+            Vec3 d = p - part.Pivot.Value;
+            return part.Pivot.Value + new Vec3(d.X * Math.Cos(a) - d.Y * Math.Sin(a), d.X * Math.Sin(a) + d.Y * Math.Cos(a), d.Z);
         }
     }
 }

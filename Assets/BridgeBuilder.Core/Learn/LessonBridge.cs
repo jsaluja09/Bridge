@@ -50,6 +50,9 @@ namespace BridgeBuilder.Core
         public int Group;
         public double Radius = 1;            // real meters, for the tubes
         public bool Flexible;                // moves with the deck in load demos
+        /// <summary>A leaf that lifts (Tower Bridge): turns about this point in the bascule demo, Turn +1 or -1.</summary>
+        public Vec3? Pivot;
+        public int Turn = 1;
         public readonly List<Segment> Segments = new List<Segment>();
         public readonly List<Face> Faces = new List<Face>();
 
@@ -86,6 +89,10 @@ namespace BridgeBuilder.Core
         public double LiveLoadSag;
         /// <summary>How far the middle of the main span swings sideways in a strong wind, real meters.</summary>
         public double WindSway;
+        /// <summary>Where the deck stays put as it grows and shrinks with heat, real x.</summary>
+        public double ThermalCenter;
+        /// <summary>How far below the deck the piers bend to let it move (0: they don't), real meters.</summary>
+        public double ThermalFlexHeight;
         public readonly List<LessonPart> Parts = new List<LessonPart>();
 
         public double MainSpan => MainSpanEnd - MainSpanStart;

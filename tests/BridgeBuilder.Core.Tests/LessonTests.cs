@@ -206,11 +206,10 @@ namespace BridgeBuilder.Core.Tests
             var deck = Bridge.Part("deck");
             var p = MidDeck;
             foreach (LoadDemo demo in Enum.GetValues(typeof(LoadDemo)))
-            {
-                Assert.Equal(p, LessonMotion.Displace(Bridge, tower, p, demo, 1.7));
-                var side = new Vec3(Bridge.MainSpanStart - 10, Bridge.DeckY, 0);
+                Assert.Equal(p, LessonMotion.Displace(Bridge, tower, p, demo, 1.7));     // not flexible, no pivot
+            var side = new Vec3(Bridge.MainSpanStart - 10, Bridge.DeckY, 0);
+            foreach (var demo in new[] { LoadDemo.Cars, LoadDemo.Wind })                // these move the main span only
                 Assert.Equal(side, LessonMotion.Displace(Bridge, deck, side, demo, 1.7));
-            }
         }
 
         [Fact]
@@ -284,5 +283,111 @@ namespace BridgeBuilder.Core.Tests
             Assert.True(b.Z > a.Z || b.Z < a.Z - 100);                      // moved on, or wrapped around
             Assert.Equal(a, LessonMotion.Streak(Bridge, 3, 1.0).head);
         }
+    }
+
+    public class MillauTests
+    {
+        static readonly LessonBridge Millau = MillauLesson.Build().Bridge;
+
+        [Fact]
+        public void EightSpans_SevenPiers_TallestAbout245m()
+        {
+            var piers = Millau.Part("piers").Segments;
+            var feet = piers.Select(s => s.A).GroupBy(p => Math.Round(p.X)).Select(g => g.Min(p => p.Y)).ToList();
+            Assert.Equal(7, feet.Count);
+            Assert.Equal(270 - 245, feet.Min(), 6);
+            var (min, max) = Millau.Bounds();
+            Assert.Equal(2460, Millau.MainSpanEnd - Millau.MainSpanStart, 6);
+            Assert.InRange(max.Y, 270 + 87 - 1e-6, 270 + 87 + 1e-6);              // the mast tops are the highest point
+        }
+
+        [Fact]
+        public void Stays_LieInOnePlaneDownTheMiddle_ElevenPairsPerMast()
+        {
+            var stays = Millau.Part("stays").Segments;
+            Assert.Equal(7 * 11 * 2, stays.Count);
+            Assert.All(stays, s => Assert.True(s.A.Z == 0 && s.B.Z == 0));
+            Assert.All(stays, s => Assert.Equal(270, s.B.Y, 9));                   // every stay holds the deck
+        }
+
+        [Fact]
+        public void Heat_GrowsTheDeckFromItsMiddle_AndBendsOnlyThePierTops()
+        {
+            var deck = Millau.Part("deck");
+            var piers = Millau.Part("piers");
+            double hot = LessonMotion.DaySeconds / 4;                              // the warmest moment of the cycle
+            var end = new Vec3(2460, 270, 0);
+            var middle = new Vec3(1230, 270, 0);
+            double grow = LessonMotion.Displace(Millau, deck, end, LoadDemo.Temperature, hot).X - end.X;
+            double expected = 1230 * LessonMotion.SteelExpansion * LessonMotion.TemperatureSwing * LessonMotion.ThermalExaggeration;
+            Assert.Equal(expected, grow, 6);
+            Assert.Equal(middle, LessonMotion.Displace(Millau, deck, middle, LoadDemo.Temperature, hot));
+            var foot = new Vec3(204, 270 - 94, 0);                                  // a pier's foot doesn't move
+            Assert.Equal(foot, LessonMotion.Displace(Millau, piers, foot, LoadDemo.Temperature, hot));
+            var top = new Vec3(204, 260, 0);                                        // 10 m below the deck: most of the way
+            double moved = LessonMotion.Displace(Millau, piers, top, LoadDemo.Temperature, hot).X - top.X;
+            Assert.True(moved < 0 && moved > -1026 * LessonMotion.SteelExpansion * 20 * 100);
+        }
+
+        [Fact]
+        public void TemperatureChange_SwingsEitherSideOfAverage()
+        {
+            Assert.Equal(0, LessonMotion.TemperatureChange(0), 9);
+            Assert.Equal(LessonMotion.TemperatureSwing, LessonMotion.TemperatureChange(LessonMotion.DaySeconds / 4), 9);
+            Assert.Equal(-LessonMotion.TemperatureSwing, LessonMotion.TemperatureChange(3 * LessonMotion.DaySeconds / 4), 9);
+        }
+    }
+
+    public class TowerBridgeTests
+    {
+        static readonly LessonBridge Tower = TowerBridgeLesson.Build().Bridge;
+
+        [Fact]
+        public void Dimensions_MatchTheRealBridge()
+        {
+            var (min, max) = Tower.Bounds();
+            Assert.Equal(244, max.X - min.X - 60, 6);                              // the river runs 30 m past each end
+            Assert.Equal(61, Tower.MainSpan, 6);
+            Assert.Equal(65, Tower.Part("towers").Segments.Max(s => Math.Max(s.A.Y, s.B.Y)), 6);
+        }
+
+        [Fact]
+        public void Leaves_PivotAtTheTowers_AndMeetInTheMiddle()
+        {
+            var north = Tower.Part("leaf-north");
+            var south = Tower.Part("leaf-south");
+            Assert.Equal(Tower.MainSpanStart, north.Pivot.Value.X, 9);
+            Assert.Equal(Tower.MainSpanEnd, south.Pivot.Value.X, 9);
+            double northTip = north.Segments.Max(s => Math.Max(s.A.X, s.B.X));
+            double southTip = south.Segments.Min(s => Math.Min(s.A.X, s.B.X));
+            Assert.Equal(northTip, southTip, 9);
+            Assert.Equal(1, north.Turn);
+            Assert.Equal(-1, south.Turn);
+        }
+
+        [Fact]
+        public void Bascules_LiftBothTipsTo86Degrees_AndLowerThemAgain()
+        {
+            var north = Tower.Part("leaf-north");
+            var south = Tower.Part("leaf-south");
+            double open = LessonMotion.BasculeSeconds / 2;
+            Assert.Equal(86, LessonMotion.BasculeAngle(open), 9);
+            Assert.Equal(0, LessonMotion.BasculeAngle(0), 9);
+            Assert.Equal(0, LessonMotion.BasculeAngle(LessonMotion.BasculeSeconds), 9);
+
+            var tip = new Vec3(Tower.MainSpanStart + 30.5, Tower.DeckY, 0);
+            var lifted = LessonMotion.Displace(Tower, north, tip, LoadDemo.Bascules, open);
+            Assert.Equal(30.5, Vec3.Distance(lifted, north.Pivot.Value), 9);        // turns, doesn't stretch
+            Assert.True(lifted.Y > Tower.DeckY + 30);
+            var southTip = new Vec3(Tower.MainSpanEnd - 30.5, Tower.DeckY, 0);
+            Assert.True(LessonMotion.Displace(Tower, south, southTip, LoadDemo.Bascules, open).Y > Tower.DeckY + 30);
+
+            var counterweight = new Vec3(Tower.MainSpanStart - 6, Tower.DeckY, 0);   // behind the pivot: goes down
+            Assert.True(LessonMotion.Displace(Tower, north, counterweight, LoadDemo.Bascules, open).Y < Tower.DeckY - 5);
+        }
+
+        [Fact]
+        public void Walkways_AreTiesThatPull() =>
+            Assert.Equal(PartRole.Pull, Tower.Part("walkways").Role);
     }
 }

@@ -8,6 +8,8 @@ namespace BridgeBuilder.Core
         public static IReadOnlyList<Lesson> All() => new[]
         {
             GoldenGateLesson.Build(),
+            TowerBridgeLesson.Build(),
+            MillauLesson.Build(),
         };
     }
 }
