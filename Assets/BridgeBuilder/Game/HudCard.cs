@@ -7,7 +7,7 @@ using UnityEngine.Rendering;
 namespace BridgeBuilder.Game
 {
     /// <summary>What a HUD card is about. Each kind has its own accent color; switching kind fades the new card in.</summary>
-    public enum HudCardKind { Intro, Instructions, Testing, Passed, Failed, Results }
+    public enum HudCardKind { Intro, Instructions, Testing, Passed, Failed, Results, Menu, Learn }
 
     /// <summary>
     /// What one HUD card shows, top to bottom. A null row is left out. Every row but Header and Title may hold
@@ -16,10 +16,14 @@ namespace BridgeBuilder.Game
     public struct HudCardContent
     {
         public HudCardKind Kind;
+        public int Page;                  // changing it fades the card in, as a new kind does
         public string Toast;              // a short warning, in the amber strip across the top
         public string Header;             // small, above the title
         public string Title;
         public string Body;
+        public string Formula;            // in a strip tinted with the accent, below the body
+        public string[] Choices;          // one row each; keep the same array while the options stay the same
+        public int Selected;              // the row filled with the accent
         public string BarLabel;           // null: no progress bar
         public float BarFill;             // 0..1
         public string Details;            // below the bar
@@ -29,10 +33,10 @@ namespace BridgeBuilder.Game
     }
 
     /// <summary>
-    /// The one floating HUD card: a rounded, dark, slightly see-through panel with a soft shadow, a band in the
-    /// card's accent color along the top and an optional progress bar, sized to fit its text. Built in code: one
-    /// vertex-colored mesh for the shapes and TextMeshPro for the text. A new kind of card fades in with a small
-    /// pop. Lengths are meters at font size 0.22 and scale with the font size.
+    /// A floating HUD card: a rounded, dark, slightly see-through panel with a soft shadow, a band in the card's
+    /// accent color along the top, and optional choice rows, formula strip and progress bar, sized to fit its text.
+    /// Built in code: one vertex-colored mesh for the shapes and TextMeshPro for the text. A new kind of card (or a
+    /// new page) fades in with a small pop. Lengths are meters at font size 0.22 and scale with the font size.
     /// </summary>
     public sealed class HudCard : MonoBehaviour
     {
@@ -50,6 +54,10 @@ namespace BridgeBuilder.Game
         [Tooltip("Between the bar's label and the bar.")]
         [SerializeField] float barGap = 0.008f;                                      // GUESS
         [SerializeField] float barHeight = 0.014f;                                   // GUESS
+        [Tooltip("Around the text inside a choice row or the formula strip.")]
+        [SerializeField] float rowPadding = 0.012f;                                  // GUESS
+        [Tooltip("Between choice rows.")]
+        [SerializeField] float rowGap = 0.008f;                                      // GUESS
         [SerializeField] Vector2 shadowOffset = new Vector2(0.006f, -0.01f);         // GUESS
         [SerializeField] float shadowSoftness = 0.03f;                               // GUESS
         [Tooltip("How far the panel sits behind the text. Local +Z points away from the player.")]
@@ -62,9 +70,13 @@ namespace BridgeBuilder.Game
         [SerializeField] float barLabelSize = 0.7f;                                  // GUESS
         [SerializeField] float controlsSize = 0.75f;                                 // GUESS
         [SerializeField] float toastSize = 0.9f;                                     // GUESS
+        [SerializeField] float choiceSize = 0.95f;                                   // GUESS
+        [SerializeField] float formulaSize = 0.9f;                                   // GUESS
         [SerializeField] float footerSize = 0.45f;
         [SerializeField] Color textColor = new Color(0.93f, 0.95f, 0.98f);           // GUESS
         [SerializeField] Color toastTextColor = new Color32(0x2A, 0x1A, 0x00, 0xFF); // GUESS
+        [Tooltip("Text on the selected choice row, over the accent.")]
+        [SerializeField] Color selectedTextColor = new Color32(0x14, 0x16, 0x1C, 0xFF); // GUESS
         [SerializeField] Color footerColor = new Color32(0x9A, 0x9A, 0x9A, 0xFF);
 
         [Header("Panel")]
@@ -74,6 +86,10 @@ namespace BridgeBuilder.Game
         [SerializeField] Color shadowColor = new Color(0f, 0f, 0f, 0.35f);           // GUESS
         [SerializeField] Color toastColor = new Color32(0xFF, 0xB5, 0x47, 0xF2);     // GUESS: alpha 0.95
         [SerializeField] Color barTrackColor = new Color(1f, 1f, 1f, 0.12f);         // GUESS
+        [Tooltip("Choice rows that are not selected.")]
+        [SerializeField] Color rowColor = new Color(1f, 1f, 1f, 0.07f);              // GUESS
+        [Tooltip("How strongly the accent shows behind the formula.")]
+        [Range(0f, 1f)] [SerializeField] float formulaTint = 0.18f;                  // GUESS
 
         [Header("Accents")]
         [SerializeField] Color introColor = new Color32(0x8B, 0x7C, 0xF6, 0xFF);        // GUESS: design pick
@@ -82,6 +98,8 @@ namespace BridgeBuilder.Game
         [SerializeField] Color passedColor = new Color32(0x5C, 0xD2, 0x7E, 0xFF);       // GUESS: design pick
         [SerializeField] Color failedColor = new Color32(0xFF, 0x6B, 0x6B, 0xFF);       // GUESS: design pick
         [SerializeField] Color resultsColor = new Color32(0xFF, 0xC9, 0x4A, 0xFF);      // GUESS: design pick
+        [SerializeField] Color menuColor = new Color32(0xFF, 0x8A, 0x3D, 0xFF);         // GUESS: design pick
+        [SerializeField] Color learnColor = new Color32(0xA3, 0xE6, 0x35, 0xFF);        // GUESS: design pick
 
         [Header("Motion")]
         [SerializeField] float fadeSeconds = 0.2f;                                   // GUESS
@@ -98,8 +116,11 @@ namespace BridgeBuilder.Game
 
         static readonly float[] ArcSin = ArcSines();
 
-        TextMeshPro _toast, _upper, _lower, _footer;
-        Vector2 _toastSize, _upperSize, _lowerSize, _footerSize;
+        TextMeshPro _toast, _upper, _formula, _barText, _lower, _footer;
+        Vector2 _toastSize, _upperSize, _formulaSize, _barTextSize, _lowerSize, _footerSize;
+        readonly List<TextMeshPro> _rows = new List<TextMeshPro>();
+        readonly List<Vector2> _rowSizes = new List<Vector2>();
+        readonly List<float> _rowTops = new List<float>();
         Mesh _mesh;
         Material _material;
         bool _linear;
@@ -116,13 +137,24 @@ namespace BridgeBuilder.Game
         float _fill;
         float _kindChangedAt;
         float _fade = -1f;
+        float _maxWidthMeters;                // 0: maxTextWidth at the font size
 
         // Card-local meters with the origin in the card's middle; tops are measured down from the card's top edge.
-        float _width, _height, _toastHeight, _barTop;
+        float _width, _height, _toastHeight, _formulaTop, _barTop;
         bool _bar;
 
         /// <summary>The middle of the card's top edge in world space, as last shown (for things drawn above it).</summary>
         public Vector3 TopCenter => transform.TransformPoint(0f, _height * 0.5f, 0f);
+
+        /// <summary>Widest the text gets before it wraps, in meters whatever the font size; 0 goes back to maxTextWidth.</summary>
+        public float MaxTextWidthMeters
+        {
+            set
+            {
+                _maxWidthMeters = value;
+                _started = false;
+            }
+        }
 
         /// <summary>A controller button as a small key badge followed by what it does, kept on one line.</summary>
         public static string Key(string key, string action) => BadgeOpen + key + "</b>\u00A0</mark> " + action + "</nobr>";
@@ -143,9 +175,14 @@ namespace BridgeBuilder.Game
 
             _toast = NewText("Card Warning", toastTextColor);
             _upper = NewText("Card Text", textColor);
+            _formula = NewText("Card Formula", textColor);
+            _barText = NewText("Card Bar Label", textColor);
             _lower = NewText("Card Controls", textColor);
             _footer = NewText("Card Footer", footerColor);
         }
+
+        /// <summary>A card shown again (say, back at the menu) is laid out afresh and fades in.</summary>
+        void OnEnable() => _started = false;
 
         void OnDestroy()
         {
@@ -172,20 +209,23 @@ namespace BridgeBuilder.Game
             bool all = !_started || fontSize != _fontSize;
             bool kind = all || content.Kind != _shown.Kind;
             bool toast = all || content.Toast != _shown.Toast;
-            bool upper = kind || content.Header != _shown.Header || content.Title != _shown.Title
-                         || content.Body != _shown.Body || content.BarLabel != _shown.BarLabel;
+            bool upper = kind || content.Header != _shown.Header || content.Title != _shown.Title || content.Body != _shown.Body;
+            bool formula = all || content.Formula != _shown.Formula;
+            bool rows = all || !ReferenceEquals(content.Choices, _shown.Choices) || content.Selected != _shown.Selected;
+            bool barText = all || content.BarLabel != _shown.BarLabel;
             bool lower = all || content.Details != _shown.Details || content.Controls != _shown.Controls
                          || content.Error != _shown.Error;
             bool footer = all || content.Footer != _shown.Footer;
             float fill = float.IsNaN(content.BarFill) ? 0f : Mathf.Clamp01(content.BarFill);
-            bool panel = toast || upper || lower || footer || fill != _fill;
+            bool layout = toast || upper || formula || rows || barText || lower || footer;
 
-            if (!_started || content.Kind != _shown.Kind)
+            if (!_started || content.Kind != _shown.Kind || content.Page != _shown.Page)
                 _kindChangedAt = Time.time;
             _started = true;
             _shown = content;
             _fontSize = fontSize;
             _unit = fontSize / ReferenceFontSize;
+            bool panel = layout || fill != _fill;
             _fill = fill;
             _bar = !string.IsNullOrEmpty(content.BarLabel);
 
@@ -207,12 +247,23 @@ namespace BridgeBuilder.Game
                 AppendSize(titleSize).Append("<b><color=#").Append(_accentHex).Append('>').Append(content.Title).Append("</color></b></size>");
                 if (!string.IsNullOrEmpty(content.Body))
                     NextLine().Append(content.Body);
-                if (_bar)
-                {
-                    NextLine();
-                    AppendSize(barLabelSize).Append(content.BarLabel).Append("</size>");
-                }
                 _upperSize = Fill(_upper, 1f);
+            }
+            if (formula)
+            {
+                _text.Clear();
+                if (!string.IsNullOrEmpty(content.Formula))
+                    _text.Append(content.Formula);
+                _formulaSize = Fill(_formula, formulaSize, rowPadding * _unit);
+            }
+            if (rows)
+                FillRows(content.Choices, content.Selected);
+            if (barText)
+            {
+                _text.Clear();
+                if (_bar)
+                    _text.Append(content.BarLabel);
+                _barTextSize = Fill(_barText, barLabelSize);
             }
             if (lower)
             {
@@ -236,7 +287,7 @@ namespace BridgeBuilder.Game
                 _footerSize = Fill(_footer, footerSize);
             }
 
-            if (toast || upper || lower || footer)
+            if (layout)
                 Layout();
             if (panel)
                 BuildPanel();
@@ -247,28 +298,54 @@ namespace BridgeBuilder.Game
 
         StringBuilder AppendSize(float share) => _text.Append("<size=").Append(Mathf.RoundToInt(share * 100f)).Append("%>");
 
+        int RowCount => _shown.Choices?.Length ?? 0;
+
+        /// <summary>One text block per choice (made as needed); the selected one is bold, in dark text over the accent.</summary>
+        void FillRows(string[] choices, int selected)
+        {
+            int count = choices?.Length ?? 0;
+            while (_rows.Count < count)
+                _rows.Add(NewText("Card Choice", textColor));
+            _rowSizes.Clear();
+            for (int i = 0; i < _rows.Count; i++)
+            {
+                _text.Clear();
+                if (i < count)
+                    _text.Append(i == selected ? "<b>" : "").Append(choices[i]).Append(i == selected ? "</b>" : "");
+                _rowSizes.Add(Fill(_rows[i], choiceSize, rowPadding * _unit));
+                _rows[i].color = i == selected ? selectedTextColor : textColor;
+            }
+            _fade = -1f;                      // setting a color resets the text's alpha; Fade puts it back
+        }
+
         /// <summary>Puts the composed text into a block, or hides the block when there is none; returns the text's size.</summary>
-        Vector2 Fill(TextMeshPro block, float sizeShare)
+        Vector2 Fill(TextMeshPro block, float sizeShare, float inset = 0f)
         {
             bool show = _text.Length > 0;
             block.gameObject.SetActive(show);
             if (!show)
                 return Vector2.zero;
-            float maxWidth = maxTextWidth * _unit;
+            float maxWidth = (_maxWidthMeters > 0f ? _maxWidthMeters : maxTextWidth * _unit) - 2f * inset;
             block.fontSize = _fontSize * sizeShare;
             block.text = _text.ToString();
             Vector2 size = block.GetPreferredValues(maxWidth + WrapSlack, Unbounded);
             return new Vector2(Mathf.Min(size.x, maxWidth), size.y);
         }
 
-        /// <summary>Stacks the blocks top to bottom: warning strip, band, text, bar, controls, footer.</summary>
+        /// <summary>Stacks the blocks top to bottom: warning strip, band, text, formula, choices, bar, controls, footer.</summary>
         void Layout()
         {
-            float u = _unit, pad = padding * u, gap = blockGap * u;
+            float u = _unit, pad = padding * u, gap = blockGap * u, inner = rowPadding * u;
+            int rows = RowCount;
             float width = Mathf.Max(Mathf.Max(minTextWidth * u, _toastSize.x), Mathf.Max(Mathf.Max(_upperSize.x, _lowerSize.x), _footerSize.x));
+            width = Mathf.Max(width, _barTextSize.x);
+            if (_formulaSize.y > 0f)
+                width = Mathf.Max(width, _formulaSize.x + 2f * inner);
+            for (int i = 0; i < rows; i++)
+                width = Mathf.Max(width, _rowSizes[i].x + 2f * inner);
             _width = width + 2f * pad;
 
-            float down = 0f, toastTop = 0f, lowerTop = 0f, footerTop = 0f;
+            float down = 0f, toastTop = 0f, barTextTop = 0f, lowerTop = 0f, footerTop = 0f;
             _toastHeight = 0f;
             if (_toastSize.y > 0f)
             {
@@ -279,9 +356,24 @@ namespace BridgeBuilder.Game
             down += bandHeight * u + pad;
             float upperTop = down;
             down += _upperSize.y;
+            if (_formulaSize.y > 0f)
+            {
+                down += gap;
+                _formulaTop = down;
+                down += _formulaSize.y + 2f * inner;
+            }
+            _rowTops.Clear();
+            for (int i = 0; i < rows; i++)
+            {
+                down += i == 0 ? gap : rowGap * u;
+                _rowTops.Add(down);
+                down += _rowSizes[i].y + 2f * inner;
+            }
             if (_bar)
             {
-                down += barGap * u;
+                down += gap;
+                barTextTop = down;
+                down += _barTextSize.y + barGap * u;
                 _barTop = down;
                 down += barHeight * u;
             }
@@ -301,6 +393,10 @@ namespace BridgeBuilder.Game
 
             Place(_toast, toastTop, _toastSize.y, width);
             Place(_upper, upperTop, _upperSize.y, width);
+            Place(_formula, _formulaTop + inner, _formulaSize.y, width - 2f * inner);
+            for (int i = 0; i < rows; i++)
+                Place(_rows[i], _rowTops[i] + inner, _rowSizes[i].y, width - 2f * inner);
+            Place(_barText, barTextTop, _barTextSize.y, width);
             Place(_lower, lowerTop, _lowerSize.y, width);
             Place(_footer, footerTop, _footerSize.y, width);
         }
@@ -313,7 +409,7 @@ namespace BridgeBuilder.Game
             block.transform.localPosition = new Vector3(0f, _height * 0.5f - top, 0f);
         }
 
-        /// <summary>The shapes, back to front: shadow, body, warning strip, accent band, bar track, bar fill.</summary>
+        /// <summary>The shapes, back to front: shadow, body, warning strip, accent band, formula strip, choice rows, bar track, bar fill.</summary>
         void BuildPanel()
         {
             _vertices.Clear();
@@ -333,9 +429,22 @@ namespace BridgeBuilder.Game
                 Section(-halfW, halfW, -halfH, halfH, radius, bandTop, halfH, toastColor, panelDepth);
             Section(-halfW, halfW, -halfH, halfH, radius, bandTop - bandHeight * u, bandTop, accent, panelDepth);
 
+            float left = -halfW + padding * u, right = halfW - padding * u, inner = rowPadding * u, rowRadius = radius * 0.5f;
+            if (_formulaSize.y > 0f)
+            {
+                float top = halfH - _formulaTop, bottom = top - _formulaSize.y - 2f * inner;
+                Color tint = accent;
+                tint.a = formulaTint;
+                Section(left, right, bottom, top, rowRadius, bottom, top, tint, panelDepth);
+            }
+            for (int i = 0; i < RowCount; i++)
+            {
+                float top = halfH - _rowTops[i], bottom = top - _rowSizes[i].y - 2f * inner;
+                Section(left, right, bottom, top, rowRadius, bottom, top, i == _shown.Selected ? accent : rowColor, panelDepth);
+            }
+
             if (_bar)
             {
-                float left = -halfW + padding * u, right = halfW - padding * u;
                 float top = halfH - _barTop, height = barHeight * u, bottom = top - height;
                 Section(left, right, bottom, top, height * 0.5f, bottom, top, barTrackColor, panelDepth);
                 if (_fill > 0f)
@@ -437,7 +546,7 @@ namespace BridgeBuilder.Game
             _indices.Add(start + 3);
         }
 
-        /// <summary>Alpha 0 to 1 and a small pop in scale over fadeSeconds after the card changes kind.</summary>
+        /// <summary>Alpha 0 to 1 and a small pop in scale over fadeSeconds after the card changes kind or page.</summary>
         void Fade()
         {
             float t = fadeSeconds > 0f ? Mathf.Clamp01((Time.time - _kindChangedAt) / fadeSeconds) : 1f;
@@ -449,8 +558,12 @@ namespace BridgeBuilder.Game
             _material.color = new Color(1f, 1f, 1f, eased);
             _toast.alpha = eased;
             _upper.alpha = eased;
+            _formula.alpha = eased;
+            _barText.alpha = eased;
             _lower.alpha = eased;
             _footer.alpha = eased;
+            foreach (var row in _rows)
+                row.alpha = eased;
         }
 
         /// <summary>TMP turns its colors linear in a linear-space project; the panel matches so accents agree.</summary>
@@ -463,7 +576,9 @@ namespace BridgeBuilder.Game
             HudCardKind.Testing => testingColor,
             HudCardKind.Passed => passedColor,
             HudCardKind.Failed => failedColor,
-            _ => resultsColor,
+            HudCardKind.Results => resultsColor,
+            HudCardKind.Menu => menuColor,
+            _ => learnColor,
         };
 
         static float[] ArcSines()

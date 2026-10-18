@@ -1,4 +1,3 @@
-using TMPro;
 using UnityEngine;
 
 namespace BridgeBuilder.Game
@@ -16,15 +15,15 @@ namespace BridgeBuilder.Game
         [SerializeField] float fontSize = 0.3f;
 
         static readonly string[] Options = { "Build a bridge", "Learn from famous bridges" };
+        static readonly string Keys = HudCard.Key("Stick", "Choose") + "   " + HudCard.Key("A", "Start");
 
         ControllerPointer _pointer;
-        TextMeshPro _text;
+        HudCard _card;
         BridgeGame _build;
         LearnMode _learn;
         GameObject _running;          // the active mode's object, or null while the menu shows
         GameObject _starting;         // the mode to start next frame
         int _choice;
-        int _shownChoice = -1;        // the choice the text was last written for
 
         void Awake()
         {
@@ -34,11 +33,9 @@ namespace BridgeBuilder.Game
             _build.ExitRequested += ShowMenu;
             _learn.ExitRequested += ShowMenu;
 
-            var go = new GameObject("Menu Text");
+            var go = new GameObject("Menu Card");
             go.transform.SetParent(transform, false);
-            _text = go.AddComponent<TextMeshPro>();
-            _text.alignment = TextAlignmentOptions.Center;
-            _text.rectTransform.sizeDelta = new Vector2(1.4f, 0.6f);
+            _card = go.AddComponent<HudCard>();
         }
 
         void Start()
@@ -73,7 +70,7 @@ namespace BridgeBuilder.Game
             if (_pointer.PrimaryPressed || _pointer.TriggerPressed)
             {
                 _starting = _choice == 0 ? _build.gameObject : _learn.gameObject;
-                _text.gameObject.SetActive(false);
+                _card.gameObject.SetActive(false);
                 return;
             }
             DrawMenu();
@@ -84,8 +81,7 @@ namespace BridgeBuilder.Game
             if (_running != null)
                 _running.SetActive(false);
             _running = null;
-            _text.gameObject.SetActive(true);
-            _shownChoice = -1;
+            _card.gameObject.SetActive(true);
         }
 
         void DrawMenu()
@@ -93,19 +89,17 @@ namespace BridgeBuilder.Game
             var cam = Camera.main;
             if (cam == null)
                 return;
-            if (_shownChoice != _choice)
+            _card.Show(new HudCardContent
             {
-                var lines = new System.Text.StringBuilder("<b>Bridge Builder</b>\n\n");
-                for (int i = 0; i < Options.Length; i++)
-                    lines.Append(i == _choice ? $"<color=#FFD24A>> {Options[i]} <</color>\n" : $"<color=#B0B0B0>{Options[i]}</color>\n");
-                lines.Append("\n<size=60%>Stick: choose   ·   A or trigger: start</size>");
-                _text.text = lines.ToString();
-                _text.fontSize = fontSize;
-                _shownChoice = _choice;
-            }
+                Kind = HudCardKind.Menu,
+                Title = "Bridge Builder",
+                Choices = Options,
+                Selected = _choice,
+                Controls = Keys,
+            }, fontSize);
             Vector3 forward = Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up).normalized;
-            _text.transform.position = cam.transform.position + forward * 0.9f - Vector3.up * 0.05f;
-            _text.transform.rotation = Quaternion.LookRotation(_text.transform.position - cam.transform.position, Vector3.up);
+            Vector3 position = cam.transform.position + forward * 0.9f - Vector3.up * 0.05f;
+            _card.transform.SetPositionAndRotation(position, Quaternion.LookRotation(position - cam.transform.position, Vector3.up));
         }
     }
 }
