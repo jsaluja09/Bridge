@@ -5,8 +5,8 @@ namespace BridgeBuilder.Game
 {
     /// <summary>
     /// Right controller tip and the game's few buttons, read straight from the Input System (spec 11):
-    /// trigger = draw, grip = delete, A = test, B = undo, stick = choose a challenge; left X = clear, Y = swap
-    /// the car's start side. Keyboard fallbacks help when testing over Link.
+    /// trigger = draw, grip = delete, A = test, B = undo, stick = choose a challenge; left X = clear, Y = mirror
+    /// on/off. Keyboard fallbacks help when testing over Link.
     /// </summary>
     public sealed class ControllerPointer : MonoBehaviour
     {
@@ -19,7 +19,7 @@ namespace BridgeBuilder.Game
         [Tooltip("The XR Origin's Camera Offset. Defaults to the main camera's parent.")]
         [SerializeField] Transform trackingSpace;
 
-        InputAction _position, _rotation, _trigger, _grip, _primary, _secondary, _clear, _swap, _stick, _next, _previous;
+        InputAction _position, _rotation, _trigger, _grip, _primary, _secondary, _clear, _mirror, _stick, _next, _previous;
         bool _stickCentered = true;
 
         public Vector3 Tip { get; private set; }
@@ -29,7 +29,7 @@ namespace BridgeBuilder.Game
         public bool PrimaryPressed => _primary.WasPressedThisFrame();
         public bool SecondaryPressed => _secondary.WasPressedThisFrame();
         public bool ClearPressed => _clear.WasPressedThisFrame();
-        public bool SwapPressed => _swap.WasPressedThisFrame();
+        public bool MirrorPressed => _mirror.WasPressedThisFrame();
         public int StickStep { get; private set; }     // +1 / -1 on a stick flick or arrow key this frame
 
         /// <summary>The floor's height: the XR Origin sits on the floor in floor tracking mode.</summary>
@@ -63,7 +63,7 @@ namespace BridgeBuilder.Game
             _primary = Button("Test", "<XRController>{RightHand}/primaryButton", "<Keyboard>/space");
             _secondary = Button("Undo", "<XRController>{RightHand}/secondaryButton", "<Keyboard>/backspace");
             _clear = Button("Clear", "<XRController>{LeftHand}/primaryButton", "<Keyboard>/r");
-            _swap = Button("Swap Start", "<XRController>{LeftHand}/secondaryButton", "<Keyboard>/y");
+            _mirror = Button("Mirror", "<XRController>{LeftHand}/secondaryButton", "<Keyboard>/m");
             _next = Button("Next", "<Keyboard>/rightArrow");
             _previous = Button("Previous", "<Keyboard>/leftArrow");
         }
@@ -76,7 +76,7 @@ namespace BridgeBuilder.Game
             return action;
         }
 
-        InputAction[] Actions() => new[] { _position, _rotation, _trigger, _grip, _primary, _secondary, _clear, _swap, _stick, _next, _previous };
+        InputAction[] Actions() => new[] { _position, _rotation, _trigger, _grip, _primary, _secondary, _clear, _mirror, _stick, _next, _previous };
 
         void OnEnable()
         {

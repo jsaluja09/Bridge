@@ -100,6 +100,8 @@ namespace BridgeBuilder.Core
 
         State _s = new State();
         readonly Stack<State> _undo = new Stack<State>();
+        int _groupDepth;
+        bool _groupSaved;          // the open group has already saved its undo snapshot
 
         public BudgetPolicy Policy { get; }
         public IReadOnlyList<Node> Nodes => _s.Nodes;
@@ -366,8 +368,25 @@ namespace BridgeBuilder.Core
             if (_undo.Count == 0)
                 return false;
             _s = _undo.Pop();
+            _groupSaved = false;
             Version++;
             return true;
+        }
+
+        /// <summary>
+        /// Starts a group of edits that one Undo takes back together (a stroke and its mirror copy). Groups nest;
+        /// only the outermost counts. Always pair with EndGroup.
+        /// </summary>
+        public void BeginGroup()
+        {
+            if (_groupDepth++ == 0)
+                _groupSaved = false;
+        }
+
+        public void EndGroup()
+        {
+            if (_groupDepth > 0)
+                _groupDepth--;
         }
 
         /// <summary>An independent copy with its own empty undo stack (tests run on a copy, spec 2.11).</summary>
@@ -379,7 +398,9 @@ namespace BridgeBuilder.Core
 
         void Push()
         {
-            _undo.Push(_s.Clone());
+            if (_groupDepth == 0 || !_groupSaved)
+                _undo.Push(_s.Clone());
+            _groupSaved = _groupDepth > 0;
             Version++;
         }
     }

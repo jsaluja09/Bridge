@@ -92,7 +92,7 @@ namespace BridgeBuilder.Game
             string material = $"Material {_model.Spent:F1} / {Challenge.Budget:F0} m";
             string road = _bridge.Road.Ok ? "<color=#5CE65C>Road ready</color>" : "Road: draw two flat lines side by side, pad to pad";
             string text = $"{material}   ·   {road}\n" +
-                          "<size=70%>Hold trigger: draw   ·   Grip on a line: delete   ·   A: test   ·   B: undo   ·   X: clear   ·   Y: swap start</size>";
+                          "<size=70%>Hold trigger: draw   ·   Grip on a line: delete   ·   A: test   ·   B: undo   ·   X: clear   ·   Y: mirror " + (_mirror ? "<b>on</b>" : "off") + "</size>";
             if (PreviewCurrent)
                 text += "\n<size=60%>Colors show how hard the bridge works to hold itself up</size>";
             return text + SolverStats();

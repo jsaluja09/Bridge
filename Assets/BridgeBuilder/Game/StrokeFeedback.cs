@@ -21,6 +21,7 @@ namespace BridgeBuilder.Game
         float _ghostAt = float.NegativeInfinity;
         int _ghostSamples;
         List<Vec3> _ghostPath;
+        List<Vec3> _ghostMirror;      // where the mirror copy will go, or null
 
         /// <summary>The line the ghost is snapped to, or -1 (drawn highlighted so you see the pairing).</summary>
         public int PartnerLine { get; private set; } = -1;
@@ -28,12 +29,13 @@ namespace BridgeBuilder.Game
         public void Clear()
         {
             _ghostPath = null;
+            _ghostMirror = null;
             PartnerLine = -1;
             _ghostSamples = 0;
         }
 
-        /// <summary>Resolves the stroke so far for the ghost, a few times a second.</summary>
-        public void UpdateGhost(List<Vector3> stroke, BridgeModel model, float now)
+        /// <summary>Resolves the stroke so far for the ghost (and its mirror copy), a few times a second.</summary>
+        public void UpdateGhost(List<Vector3> stroke, BridgeModel model, MirrorPlane? mirror, float now)
         {
             if (now - _ghostAt < GhostRefreshSeconds || stroke.Count == _ghostSamples)
                 return;
@@ -41,6 +43,7 @@ namespace BridgeBuilder.Game
             _ghostSamples = stroke.Count;
             var shape = Resolve(stroke, model, out int partner);
             _ghostPath = shape != null ? shape.Path(0.01) : null;
+            _ghostMirror = _ghostPath != null && mirror.HasValue ? MirrorAssist.Mirror(_ghostPath, mirror.Value) : null;
             PartnerLine = partner;
         }
 
@@ -78,13 +81,20 @@ namespace BridgeBuilder.Game
             Clear();
         }
 
+        static void DrawPath(BridgeView view, List<Vec3> path, float radius, Color color)
+        {
+            for (int i = 1; i < path.Count; i++)
+                view.Tube(path[i - 1].ToUnity(), path[i].ToUnity(), radius, color);
+        }
+
         public void Draw(BridgeView view, float radius, Color ghostColor, Color rejectColor, bool drawing, float now)
         {
             if (drawing && _ghostPath != null)
             {
                 Color c = PartnerLine >= 0 ? ghostColor : Color.Lerp(ghostColor, Color.white, 0.5f);
-                for (int i = 1; i < _ghostPath.Count; i++)
-                    view.Tube(_ghostPath[i - 1].ToUnity(), _ghostPath[i].ToUnity(), radius * 0.6f, c);
+                DrawPath(view, _ghostPath, radius * 0.6f, c);
+                if (_ghostMirror != null)
+                    DrawPath(view, _ghostMirror, radius * 0.5f, Color.Lerp(c, Color.white, 0.5f));
             }
 
             float age = now - _rejectedAt;

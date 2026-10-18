@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 using BridgeBuilder.Core;
 using UnityEngine;
 
@@ -7,7 +6,7 @@ namespace BridgeBuilder.Game
 {
     /// <summary>
     /// Building input (spec 11.1, 11.4): hold the trigger to draw a line anywhere, release to place it;
-    /// squeeze grip on a line to delete it; B undoes, X clears, Y swaps the car's start side.
+    /// squeeze grip on a line to delete it; B undoes, X clears, Y turns mirroring across the road on and off.
     /// </summary>
     public sealed partial class BridgeGame
     {
@@ -21,8 +20,11 @@ namespace BridgeBuilder.Game
         float _clearArmedUntil;
         float _roadWarningUntil;
 
+        bool _mirror = true;          // copy each beam across the road's centerline
+
         bool Drawing => _drawing;
         static double SnapRadius => Constants.Draw.SnapRadiusMeters;
+        MirrorPlane? MirrorPlaneNow => _mirror && _pads != null ? MirrorPlane.Centerline(_pads[0], _pads[1]) : (MirrorPlane?)null;
 
         void ResetInput()
         {
@@ -49,7 +51,7 @@ namespace BridgeBuilder.Game
             {
                 if (Vector3.Distance(_stroke[_stroke.Count - 1], tip) > 0.005f)
                     _stroke.Add(tip);
-                _strokeFx.UpdateGhost(_stroke, _model, Time.time);      // W4-04: ghost of the resolved, snapped shape
+                _strokeFx.UpdateGhost(_stroke, _model, MirrorPlaneNow, Time.time);      // W4-04: ghost of the resolved, snapped shape
             }
             else if (_drawing)
             {
@@ -69,10 +71,10 @@ namespace BridgeBuilder.Game
                 _scheduler.NotifyPaused();
             }
 
-            if (_pointer.SwapPressed)
+            if (_pointer.MirrorPressed)
             {
-                _start.Swap();
-                Flash("The car now starts from the other end");
+                _mirror = !_mirror;
+                Flash(_mirror ? "Mirror on: beams are copied to the other side of the road" : "Mirror off");
             }
 
             if (_pointer.ClearPressed && !_drawing)
@@ -139,42 +141,11 @@ namespace BridgeBuilder.Game
                 return;
             }
 
-            int added = 0;
-            foreach (var piece in pieces)
+            var ctx = new StrokeBuilder.Context { Pads = _pads, GroundDots = _groundDots, Mirror = MirrorPlaneNow };
+            var result = StrokeBuilder.Build(_model, pieces, ctx);
+            if (!result.Ok)
             {
-                var ctx = new FreeDraw.Context
-                {
-                    Nodes = _model.Nodes,
-                    Joined = (a, b) => _model.Members.Any(m => (m.NodeA == a && m.NodeB == b) || (m.NodeA == b && m.NodeB == a)),
-                    Pads = _pads,
-                    GroundDots = _groundDots,
-                };
-                foreach (var chain in FreeDraw.Build(piece, ctx, out _))
-                {
-                    var vertices = new List<LineVertex>(chain.Count);
-                    foreach (var v in chain)
-                    {
-                        if (v.IsExisting)
-                            vertices.Add(LineVertex.Existing(v.ExistingId));
-                        else if (v.NewSupport)
-                            vertices.Add(LineVertex.Existing(_model.AddFixedNode(v.Position, v.SurfaceId, v.Ground)));
-                        else
-                            vertices.Add(LineVertex.New(v.Position));
-                    }
-                    var result = _model.TryAddFreeLine(vertices);
-                    if (!result.Ok)
-                    {
-                        for (; added > 0; added--)
-                            _model.Undo();            // a polyline goes in whole or not at all
-                        Reject(result.Reason == EditReason.BudgetExceeded ? "Out of material. Delete or undo something first." : null);
-                        return;
-                    }
-                    added++;
-                }
-            }
-            if (added == 0)
-            {
-                Reject(null);
+                Reject(result.Reason == EditReason.BudgetExceeded ? "Out of material. Delete or undo something first." : null);
                 return;
             }
             _stroke.Clear();
