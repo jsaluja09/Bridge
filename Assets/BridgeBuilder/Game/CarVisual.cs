@@ -1,293 +1,212 @@
+using System.Collections.Generic;
 using BridgeBuilder.Core;
 using UnityEngine;
 
 namespace BridgeBuilder.Game
 {
     /// <summary>
-    /// W4-08: Primitive "Hot Wheels" car built from Unity built-in shapes.
-    /// Dimensions come from Constants.Car (wheelbase, track, wheel radius).
-    /// If <see cref="sourcedModelPrefab"/> is assigned the primitives are hidden and the prefab is scaled
-    /// to fit the wheelbase and track.  Wheels always spin from car speed and the body pitches/rolls from
-    /// the suspension state, regardless of which visual is active.
-    ///
-    /// All sizes are in room-space metres.
-    ///
-    /// Quest 2 notes (Snapdragon XR2, tile-based GPU, URP):
-    ///   - Shadow casting/receiving is disabled on every renderer: Quest 2's recommended URP pipeline
-    ///     omits the shadow resolve pass, and casting adds an extra tile-flush pass on the XR2.
-    ///   - One shared Material per colour (4 total). Sharing lets Unity merge draw calls and avoids
-    ///     per-primitive material allocation that would defeat GPU instancing.
-    ///   - Colliders are destroyed immediately: PhysX is not used in this project and keeping them
-    ///     wastes broadphase budget on Android.
+    /// W4-08: the primitive "Hot Wheels" car, built once from CarBlueprint (a low wide body, cabin with windows,
+    /// bumpers, lights and four big wheels) and posed every frame from CarPose: body from heading, pitch and
+    /// roll, each wheel at its spring's ground contact, wheels turning with the distance driven. Sizes come from
+    /// the Core car constants. If sourcedModelPrefab is set, that model is fitted to the car's length and the
+    /// primitives are hidden. Colors use SolidMaterials, so nothing draws magenta on the headset.
     /// </summary>
     public sealed class CarVisual : MonoBehaviour
     {
-        // ── Inspector ────────────────────────────────────────────────────────
-        [Tooltip("Optional sourced car prefab (license must be recorded per spec 1). " +
-                 "Empty = primitive Hot Wheels body. Assign and it replaces the primitives.")]
-        [SerializeField] public GameObject sourcedModelPrefab;
-
-        [Tooltip("Rotate the sourced prefab so its nose faces +Z (Unity forward).")]
+        [Tooltip("Optional car model (its license recorded first, HG-licenses). Empty = the primitive toy car.")]
+        public GameObject sourcedModelPrefab;
+        [Tooltip("Turn the model if its nose isn't along +Z.")]
         [SerializeField] float sourcedYawOffset;
 
-        // ── Runtime ──────────────────────────────────────────────────────────
-        Transform _root;          // overall root: position = ground contact; rotation = heading
-        Transform _body;          // low slab body (or sourced model holder)
-        Transform[] _wheels;      // four wheel pivots (null when using sourced model)
-        bool _primitiveActive;
-        float _cachedScale = -1f;
+        [Header("Colors")]
+        [SerializeField] Color bodyColor = new Color(1f, 0.25f, 0.08f);
+        [SerializeField] Color glassColor = new Color(0.45f, 0.75f, 0.95f);
+        [SerializeField] Color tireColor = new Color(0.08f, 0.08f, 0.09f);
+        [SerializeField] Color hubColor = new Color(0.85f, 0.85f, 0.88f);
+        [SerializeField] Color headlightColor = new Color(1f, 0.95f, 0.6f);
+        [SerializeField] Color taillightColor = new Color(0.9f, 0.05f, 0.05f);
+        [SerializeField] Color bumperColor = new Color(0.2f, 0.2f, 0.22f);
 
-        // Wheel spin accumulator (radians).
-        float _spinAngle;
+        static float Scale => (float)Constants.Scale.RoomToBridge;
 
-        // ── Shared materials ─────────────────────────────────────────────────
-        // Quest 2: one shared Material instance per colour lets Unity batch draw calls and
-        // avoids per-frame material allocation.  Destroyed with the application.
-        static Material _matBody;
-        static Material _matCabin;
-        static Material _matWheel;
-        static Material _matHub;
+        Transform _root;
+        Transform _body;                      // everything that doesn't turn with a wheel
+        readonly Transform[] _wheels = new Transform[4];
+        readonly Vector3[] _wheelAnchor = new Vector3[4];    // car-local wheel centers at rest (room units)
+        Transform _model;
+        readonly List<Transform> _modelWheels = new List<Transform>();
+        readonly List<Quaternion> _modelWheelRest = new List<Quaternion>();
 
-        // ── Dimensions from Core constants (room-space) ───────────────────────
-        static float RoomOf(double bridgeMetres) => (float)(bridgeMetres / Constants.Scale.RoomToBridge);
-
-        static float Wheelbase => RoomOf(Constants.Car.Wheelbase);
-        static float Track     => RoomOf(Constants.Car.Track);
-        static float CarLength => RoomOf(Constants.Car.Length);
-        static float WheelR    => RoomOf(Constants.Car.StaticSag); // spring sag ≈ wheel visual radius, GUESS
-
-        // Body shape ratios (relative to car length / track).
-        const float BodyHeightRatio  = 0.18f;
-        const float BodyWidthRatio   = 0.70f;
-        const float CabinLengthRatio = 0.38f;
-        const float CabinHeightRatio = 0.26f;
-
-        // Hot-Wheels colour palette.
-        static readonly Color BodyColor  = new Color(1.00f, 0.22f, 0.05f); // vivid red-orange
-        static readonly Color CabinColor = new Color(0.55f, 0.85f, 1.00f); // light-blue glass
-        static readonly Color WheelColor = new Color(0.10f, 0.10f, 0.12f); // dark rubber
-        static readonly Color HubColor   = new Color(0.90f, 0.75f, 0.20f); // gold hub
-
-        // ── Public API ───────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Show the car at the given room-space pose.  <paramref name="roomForward"/> and
-        /// <paramref name="roomUp"/> come directly from <see cref="RunSnapshot"/> and already
-        /// encode pitch and roll.
-        /// </summary>
-        public void Show(Vector3 roomPosition, Vector3 roomForward, Vector3 roomUp,
-                         float roomLength, float speed, float pitch, float roll, float dt)
+        /// <summary>Places the car for this frame.</summary>
+        public void Show(CarPose pose)
         {
+            if (pose == null)
+                return;
             EnsureBuilt();
-            if (!Mathf.Approximately(roomLength, _cachedScale))
-                Fit(roomLength);
-
             _root.gameObject.SetActive(true);
-            _root.SetPositionAndRotation(
-                roomPosition,
-                Quaternion.LookRotation(roomForward.normalized, roomUp.normalized));
-
-            // Wheel spin: ω = v_room / r_room.
-            float vRoom  = speed > 0 ? (float)(speed / Constants.Scale.RoomToBridge) : 0f;
-            float angVel = WheelR > 1e-5f ? vRoom / WheelR : 0f;
-            _spinAngle += angVel * dt;
-
-            if (_primitiveActive && _wheels != null)
+            var rotation = Quaternion.LookRotation(pose.Forward.ToUnity(), pose.Up.ToUnity());
+            _root.SetPositionAndRotation(pose.Origin.ToUnity(), rotation);
+            var spin = Quaternion.AngleAxis((float)pose.SpinAngle * Mathf.Rad2Deg, Vector3.right);
+            if (_model != null)
             {
-                for (int i = 0; i < _wheels.Length; i++)
-                    if (_wheels[i] != null)
-                        _wheels[i].localRotation = Quaternion.Euler(_spinAngle * Mathf.Rad2Deg, 0f, 0f);
-
-                if (_body != null)
-                    _body.localRotation = Quaternion.Euler(pitch * Mathf.Rad2Deg, 0f, roll * Mathf.Rad2Deg);
+                // The model's own wheels (children named "...Wheel...") turn about their axles.
+                for (int i = 0; i < _modelWheels.Count; i++)
+                    _modelWheels[i].localRotation = _modelWheelRest[i] * spin;
+                return;
             }
-            else if (!_primitiveActive && _body != null)
+
+            for (int w = 0; w < 4; w++)
             {
-                _body.localRotation = Quaternion.Euler(pitch * Mathf.Rad2Deg, sourcedYawOffset, roll * Mathf.Rad2Deg);
+                // Each wheel sits at its own contact point, so the springs show; it turns about the axle.
+                _wheels[w].SetPositionAndRotation(pose.WheelCenters[w].ToUnity(), rotation * spin);
             }
         }
 
-        /// <summary>Hides the car.</summary>
         public void Hide()
         {
             if (_root != null)
                 _root.gameObject.SetActive(false);
         }
 
-        // ── Lifecycle ────────────────────────────────────────────────────────
+        /// <summary>
+        /// A licensed model each developer imports locally (gitignored, HG-licenses) and names BridgeCar in any
+        /// Resources folder. The game is built at runtime, so this is how it reaches the slot.
+        /// </summary>
+        public const string LocalModelName = "BridgeCar";
 
         void EnsureBuilt()
         {
-            if (_root != null) return;
-            EnsureMaterials();
-            _root = new GameObject("CarVisual").transform;
+            if (_root != null)
+                return;
+            _root = new GameObject("Car").transform;
             _root.SetParent(transform, false);
-            if (sourcedModelPrefab != null) BuildSourced();
-            else                            BuildPrimitive();
+            if (sourcedModelPrefab == null)
+                sourcedModelPrefab = Resources.Load<GameObject>(LocalModelName);
+            if (sourcedModelPrefab != null)
+                BuildSourced();
+            else
+                BuildPrimitive();
         }
-
-        // ── Shared material helpers ──────────────────────────────────────────
-
-        static void EnsureMaterials()
-        {
-            if (_matBody != null) return;
-
-            // URP Lit is the correct shader for Quest 2 + URP.  Fall back to Standard if
-            // this assembly is loaded in a non-URP project (e.g. the CI build).
-            Shader s = Shader.Find("Universal Render Pipeline/Lit")
-                    ?? Shader.Find("Standard");
-
-            _matBody  = MakeMat(s, BodyColor);
-            _matCabin = MakeMat(s, CabinColor);
-            _matWheel = MakeMat(s, WheelColor);
-            _matHub   = MakeMat(s, HubColor);
-        }
-
-        static Material MakeMat(Shader shader, Color color)
-        {
-            var mat = new Material(shader) { color = color };
-            mat.enableInstancing = true; // allow GPU instancing within this colour group
-            return mat;
-        }
-
-        /// <summary>
-        /// Assigns the shared material and disables shadow casting/receiving.
-        /// Quest 2: every shadow pass (cast map + receive resolve) costs an extra tile-flush on the XR2.
-        /// <see cref="BridgeView"/> already does this for bridge members; we match the convention here.
-        /// </summary>
-        static void ApplyMat(GameObject go, Material mat)
-        {
-            var r = go.GetComponent<Renderer>();
-            if (r == null) return;
-            r.sharedMaterial    = mat;
-            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            r.receiveShadows    = false;
-        }
-
-        // ── Primitive car construction ────────────────────────────────────────
 
         void BuildPrimitive()
         {
-            _primitiveActive = true;
-            float len = CarLength;
-            float trk = Track;
-            float wb  = Wheelbase;
-            float wr  = WheelR;
-            float bh  = len * BodyHeightRatio;
-            float bw  = trk * BodyWidthRatio;
-
-            // Low wide slab body.
-            _body = MakeBox("Body", new Vector3(len, bh, bw), _matBody);
+            var car = Constants.Car.Standard(Constants.Human.CarMassKg);
+            _body = new GameObject("Body").transform;
             _body.SetParent(_root, false);
-            _body.localPosition = new Vector3(0f, wr + bh * 0.5f, 0f);
-
-            // Smaller cabin on top of body.
-            float cLen = len * CabinLengthRatio;
-            float cHgt = len * CabinHeightRatio;
-            var cabin = MakeBox("Cabin", new Vector3(cLen, cHgt, bw * 0.9f), _matCabin);
-            cabin.SetParent(_root, false);
-            cabin.localPosition = new Vector3(len * 0.05f, wr + bh + cHgt * 0.5f, 0f);
-
-            // Four oversized wheels (0=FL, 1=FR, 2=RL, 3=RR).
-            _wheels = new Transform[4];
-            float halfWb  = wb * 0.5f;
-            float halfTrk = trk * 0.5f + wr * 0.4f; // slightly outside the body
-            for (int i = 0; i < 4; i++)
+            for (int w = 0; w < 4; w++)
             {
-                float wx = i < 2 ?  halfWb : -halfWb;
-                float wz = i % 2 == 0 ?  halfTrk : -halfTrk;
-                _wheels[i] = MakeWheel("Wheel" + i, wr, wx, wz);
+                _wheels[w] = new GameObject("Wheel" + w).transform;
+                _wheels[w].SetParent(_root, false);
+                _wheelAnchor[w] = Local(SuspensionCar.WheelX(car, w), CarBlueprint.WheelRadius(car), SuspensionCar.WheelY(car, w));
+            }
+
+            foreach (var part in CarBlueprint.Build(car, Constants.Car.Length))
+            {
+                var go = GameObject.CreatePrimitive(part.Shape == CarPartShape.Wheel ? PrimitiveType.Cylinder : PrimitiveType.Cube);
+                go.name = part.Name;
+                Destroy(go.GetComponent<Collider>());
+                var renderer = go.GetComponent<Renderer>();
+                renderer.sharedMaterial = SolidMaterials.Get(ColorOf(part.Color));
+                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                renderer.receiveShadows = false;
+
+                var t = go.transform;
+                Vector3 center = Local(part.Along, part.Up, part.Across);
+                Vector3 size = new Vector3((float)part.SizeAcross, (float)part.SizeUp, (float)part.SizeAlong) / Scale;
+                if (part.Wheel >= 0)
+                {
+                    t.SetParent(_wheels[part.Wheel], false);
+                    t.localPosition = center - _wheelAnchor[part.Wheel];
+                }
+                else
+                {
+                    t.SetParent(_body, false);
+                    t.localPosition = center;
+                }
+                if (part.Shape == CarPartShape.Wheel)
+                {
+                    // A Unity cylinder is 1 across and 2 tall along its Y; lay it on its side along the axle.
+                    t.localRotation = Quaternion.Euler(0f, 0f, 90f);
+                    t.localScale = new Vector3(size.y, size.x / 2f, size.z);
+                }
+                else
+                {
+                    t.localScale = size;
+                }
             }
         }
 
-        Transform MakeBox(string name, Vector3 size, Material mat)
+        /// <summary>A car-frame point in Unity local axes: x across, y up, z along (room units).</summary>
+        static Vector3 Local(double along, double up, double across) => new Vector3((float)across, (float)up, (float)along) / Scale;
+
+        Color ColorOf(CarPartColor c) => c switch
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            go.name = name;
-            Destroy(go.GetComponent<Collider>()); // PhysX not used; remove to save broadphase cost
-            go.transform.localScale = size;
-            ApplyMat(go, mat);
-            return go.transform;
-        }
+            CarPartColor.Body => bodyColor,
+            CarPartColor.Cabin => bodyColor * 0.85f,
+            CarPartColor.Glass => glassColor,
+            CarPartColor.Tire => tireColor,
+            CarPartColor.Hub => hubColor,
+            CarPartColor.Headlight => headlightColor,
+            CarPartColor.Taillight => taillightColor,
+            _ => bumperColor,
+        };
 
-        Transform MakeWheel(string name, float radius, float x, float z)
-        {
-            var pivot = new GameObject(name);
-            pivot.transform.SetParent(_root, false);
-            pivot.transform.localPosition = new Vector3(x, radius, z);
-
-            // Unity Cylinder: 1 m tall along Y, 1 m diameter in X/Z.
-            // Rotate 90° so the flat disc faces outward (car's Z axis).
-            float thick = radius * 0.55f;
-
-            var tyre = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            tyre.name = "Tyre";
-            Destroy(tyre.GetComponent<Collider>());
-            tyre.transform.SetParent(pivot.transform, false);
-            tyre.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
-            tyre.transform.localScale    = new Vector3(radius * 2f, thick, radius * 2f);
-            ApplyMat(tyre, _matWheel);
-
-            var hub = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            hub.name = "Hub";
-            Destroy(hub.GetComponent<Collider>());
-            hub.transform.SetParent(pivot.transform, false);
-            hub.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
-            hub.transform.localScale    = new Vector3(radius, thick * 0.25f, radius);
-            ApplyMat(hub, _matHub);
-
-            return pivot.transform;
-        }
-
-        // ── Sourced model ────────────────────────────────────────────────────
-
+        /// <summary>Fits the sourced model to the car's length and sits it on the ground; the primitives stay unbuilt.</summary>
         void BuildSourced()
         {
-            _primitiveActive = false;
-            _body = new GameObject("SourcedHolder").transform;
-            _body.SetParent(_root, false);
-
-            var model = Instantiate(sourcedModelPrefab);
+            var holder = new GameObject("Model").transform;
+            holder.SetParent(_root, false);
+            holder.localRotation = Quaternion.Euler(0f, sourcedYawOffset, 0f);
+            var model = Instantiate(sourcedModelPrefab, holder, false);
             foreach (var c in model.GetComponentsInChildren<Collider>())
                 Destroy(c);
-            // Disable shadows on every renderer in the sourced prefab (Quest 2 compatibility).
-            foreach (var r in model.GetComponentsInChildren<Renderer>())
+            foreach (var t in model.GetComponentsInChildren<Transform>())
             {
-                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                r.receiveShadows    = false;
+                if (t != model.transform && t.name.IndexOf("Wheel", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    _modelWheels.Add(t);
+                    _modelWheelRest.Add(t.localRotation);
+                }
             }
-            model.transform.SetParent(_body, false);
-            _wheels = null;
+
+            var bounds = LocalBounds(holder.gameObject);
+            float length = Mathf.Max(bounds.size.x, bounds.size.z);
+            holder.localScale = Vector3.one * (length > 1e-5f ? (float)(Constants.Car.Length / Scale) / length : 1f);
+            bounds = LocalBounds(holder.gameObject);
+            holder.localPosition = -new Vector3(bounds.center.x, bounds.min.y, bounds.center.z);
+            _model = holder;
         }
 
-        void Fit(float roomLength)
+        /// <summary>Renderer bounds in the root's frame.</summary>
+        Bounds LocalBounds(GameObject go)
         {
-            _cachedScale = roomLength;
-            if (!_primitiveActive)
+            var renderers = go.GetComponentsInChildren<Renderer>();
+            var b = new Bounds(Vector3.zero, Vector3.zero);
+            bool first = true;
+            foreach (var r in renderers)
             {
-                // Scale sourced model so its longest bounding-box axis matches roomLength.
-                _body.localScale    = Vector3.one;
-                _body.localRotation = Quaternion.Euler(0f, sourcedYawOffset, 0f);
-                _body.localPosition = Vector3.zero;
-
-                var bounds  = WorldBounds(_body.gameObject);
-                float span  = Mathf.Max(bounds.size.x, bounds.size.z);
-                _body.localScale = Vector3.one * (span > 1e-5f ? roomLength / span : 1f);
-                bounds           = WorldBounds(_body.gameObject);
-                // Seat the bottom of the model at the root (ground contact).
-                _body.localPosition = -new Vector3(bounds.center.x, bounds.min.y, bounds.center.z);
+                var wb = r.bounds;
+                foreach (var corner in Corners(wb))
+                {
+                    Vector3 p = _root.InverseTransformPoint(corner);
+                    if (first)
+                    {
+                        b = new Bounds(p, Vector3.zero);
+                        first = false;
+                    }
+                    else
+                    {
+                        b.Encapsulate(p);
+                    }
+                }
             }
-            // Primitives are sized from Core constants and need no re-fit.
-        }
-
-        static Bounds WorldBounds(GameObject go)
-        {
-            var rs = go.GetComponentsInChildren<Renderer>();
-            if (rs.Length == 0)
-                return new Bounds(go.transform.position, Vector3.one * 0.1f);
-            var b = rs[0].bounds;
-            for (int i = 1; i < rs.Length; i++) b.Encapsulate(rs[i].bounds);
             return b;
+        }
+
+        static IEnumerable<Vector3> Corners(Bounds b)
+        {
+            for (int i = 0; i < 8; i++)
+                yield return b.center + Vector3.Scale(b.extents, new Vector3((i & 1) == 0 ? -1 : 1, (i & 2) == 0 ? -1 : 1, (i & 4) == 0 ? -1 : 1));
         }
     }
 }

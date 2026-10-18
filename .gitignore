@@ -132,3 +132,7 @@ Assets/Resources.meta
 /dotnet/obj/
 /tests/**/bin/
 /tests/**/obj/
+
+# Third-party assets each developer imports locally (Asset Store EULA, HG-licenses)
+Assets/ThirdParty/
+Assets/ThirdParty.meta

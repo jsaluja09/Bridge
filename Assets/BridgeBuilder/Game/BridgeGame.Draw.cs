@@ -20,6 +20,8 @@ namespace BridgeBuilder.Game
         [SerializeField] Color highlightColor = new Color(0.3f, 0.9f, 1f);
         [SerializeField] Color warningColor = new Color(1f, 0.2f, 0.25f);
         [SerializeField] Color floatingColor = new Color(0.85f, 0.2f, 0.85f);
+        [Tooltip("Pieces that broke away and are falling.")]
+        [SerializeField] Color fallingColor = new Color(0.62f, 0.58f, 0.52f);
 
         static Vector3 V(Vec3 v) => v.ToUnity();
 
@@ -133,11 +135,19 @@ namespace BridgeBuilder.Game
             }
         }
 
+        CarPose _parked;
+        Pad _parkedOn;                        // the pad the parked pose was made for
+
         void DrawParkedCar()
         {
             var pad = _pads[_start.Start];
-            Vec3 spot = pad.FrontCenter - pad.Forward * (pad.Depth / 2);
-            _car.Show(V(spot), V(pad.Forward), Vector3.up, (float)(Constants.Car.Length / Scale));
+            if (_parked == null || _parkedOn != pad)
+            {
+                Vec3 spot = pad.FrontCenter - pad.Forward * (pad.Depth / 2);
+                _parked = CarPoseTracker.Parked(Constants.Car.Standard(Challenge.CarWeightKg), Scale, spot, pad.Forward);
+                _parkedOn = pad;
+            }
+            _car.Show(_parked);
         }
 
         // ---------- Test run ----------
@@ -150,11 +160,13 @@ namespace BridgeBuilder.Game
             var input = snap.Bridge.Input;
             var pos = snap.Positions;
 
-            // A deck rides its nodes, so on a failed rail it tilts and falls with the debris (W4-07).
-            foreach (var deck in snap.Bridge.Decks)
+            // A deck rides its nodes, so on a failed rail it tilts and falls with the debris; torn pieces fall on
+            // their own (FailureFx), and fallen deck shrinks away once it has lain on the floor (W4-07).
+            for (int d = 0; d < snap.Bridge.Decks.Count; d++)
             {
+                var deck = snap.Bridge.Decks[d];
                 Color c = Color.Lerp(roadColor, BridgeView.UtilizationColor((float)WorstEdge(deck, snap.Utilization, snap.State)), 0.35f);
-                DrawDeck(deck, i => V(pos[i]), c, snap.State, input);
+                DrawDeck(deck, i => V(pos[i]), c, snap.State, input, _fx.NodeFade);
             }
 
             var buckling = _worker.LatestBuckling;
@@ -163,35 +175,56 @@ namespace BridgeBuilder.Game
                 var m = input.Members[k];
                 var state = snap.State[k];
                 if (state == MemberState.Broken || m.HiddenBrace)
-                    continue;                 // broken members are drawn as halves by FailureFx
-                Vector3 a = V(pos[snap.Bridge.NodeIndex[m.NodeA]]), b = V(pos[snap.Bridge.NodeIndex[m.NodeB]]);
+                    continue;                 // broken members fall as pieces drawn by FailureFx
+                int ia = snap.Bridge.NodeIndex[m.NodeA], ib = snap.Bridge.NodeIndex[m.NodeB];
+                Vector3 a = V(pos[ia]), b = V(pos[ib]);
                 float u = (float)snap.Utilization[k];
                 if (state == MemberState.Falling)
-                    _view.Tube(a, b, memberRadius, memberColor * 0.6f);
+                {
+                    float fade = Mathf.Min(_fx.NodeFade(ia), _fx.NodeFade(ib));
+                    if (fade > 0f)
+                        _view.Tube(a, b, memberRadius * fade, fallingColor);
+                }
                 else
+                {
                     _fx.Member(_view, a, b, memberRadius, BridgeView.UtilizationColor(u), u, k < buckling.Length ? (float)buckling[k] : 0f);
+                }
             }
-            _fx.DrawBroken(_view, snap, memberRadius, jointRadius * 1.2f);
-            DrawJoints(input, i => V(pos[i]), snap.Utilization);
+            _fx.DrawPieces(_view, memberRadius);
+            DrawJoints(input, i => V(pos[i]), snap.Utilization, _fx.NodeFade);
 
-            _car.Show(V(snap.CarPosition), V(snap.CarForward), V(snap.CarUp), (float)(Constants.Car.Length / Scale));
+            _car.Show(_worker.LatestCarPose);
         }
 
         // ---------- Shared ----------
 
         Vec3 Node(SolverInput input, int id) => input.Nodes[_bridge.NodeIndex[id]].Position;
 
-        void DrawDeck(DeckGeometry deck, System.Func<int, Vector3> position, Color color, MemberState[] state, SolverInput input = null)
+        /// <summary>Torn triangles are skipped (they fall as pieces); fade shrinks fallen ones toward their middle.</summary>
+        void DrawDeck(DeckGeometry deck, System.Func<int, Vector3> position, Color color, MemberState[] state = null,
+                      SolverInput input = null, System.Func<int, float> fade = null)
         {
             for (int t = 0; t < deck.Triangles.Length; t += 3)
             {
                 if (state != null && TriangleBroken(deck, t, state, input))
                     continue;
-                _view.Triangle(position(deck.Triangles[t]), position(deck.Triangles[t + 1]), position(deck.Triangles[t + 2]), color);
+                int i0 = deck.Triangles[t], i1 = deck.Triangles[t + 1], i2 = deck.Triangles[t + 2];
+                Vector3 p0 = position(i0), p1 = position(i1), p2 = position(i2);
+                float f = fade == null ? 1f : Mathf.Min(fade(i0), Mathf.Min(fade(i1), fade(i2)));
+                if (f <= 0f)
+                    continue;
+                if (f < 1f)
+                {
+                    Vector3 mid = (p0 + p1 + p2) / 3f;
+                    p0 = Vector3.Lerp(mid, p0, f);
+                    p1 = Vector3.Lerp(mid, p1, f);
+                    p2 = Vector3.Lerp(mid, p2, f);
+                }
+                _view.Triangle(p0, p1, p2, color);
             }
         }
 
-        void DrawJoints(SolverInput input, System.Func<int, Vector3> position, double[] utilization)
+        void DrawJoints(SolverInput input, System.Func<int, Vector3> position, double[] utilization, System.Func<int, float> fade = null)
         {
             var degree = new int[input.Nodes.Count];
             var index = _bridge != null && _phase == Phase.Build ? _bridge.NodeIndex : _snapshot?.Bridge.NodeIndex;
@@ -214,8 +247,9 @@ namespace BridgeBuilder.Game
             }
             for (int i = 0; i < degree.Length; i++)
             {
-                if (degree[i] >= 3 && !input.Nodes[i].Fixed)
-                    _view.Dot(position(i), jointRadius, utilization != null ? BridgeView.UtilizationColor((float)worst[i]) : memberColor);
+                float f = fade == null ? 1f : fade(i);
+                if (degree[i] >= 3 && !input.Nodes[i].Fixed && f > 0f)
+                    _view.Dot(position(i), jointRadius * f, utilization != null ? BridgeView.UtilizationColor((float)worst[i]) : memberColor);
             }
         }
 
