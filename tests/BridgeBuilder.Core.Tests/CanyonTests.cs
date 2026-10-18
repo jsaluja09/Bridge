@@ -110,4 +110,134 @@ namespace BridgeBuilder.Core.Tests
             Assert.Equal(0.8 * Constants.Canyon.RiverShare, to - from, 9);
         }
     }
+
+    /// <summary>The canyon diorama mesh: shape, budget, and colors for snow and the town's lights.</summary>
+    public class CanyonMeshTests
+    {
+        static CanyonLayout Layout(double nearY = 0.9, double farY = 0.9)
+        {
+            var (near, far) = Pad.FromTaps(new Vec3(0, nearY, 0), new Vec3(1, farY, 0));
+            return new CanyonLayout(near, far);
+        }
+
+        [Fact]
+        public void Mesh_IsFlatShadedFiniteAndWithinBudget()
+        {
+            var m = CanyonMesh.Build(Layout());
+
+            Assert.InRange(m.TriangleCount, 500, 3000);
+            Assert.Equal(m.Positions.Count, m.Triangles.Count);                 // every triangle has its own vertices
+            Assert.Equal(m.Positions.Count, m.Normals.Count);
+            Assert.Equal(m.Positions.Count, m.Surfaces.Count);
+            Assert.All(m.Positions, p => Assert.True(p.IsFinite));
+            Assert.All(m.Normals, n => Assert.Equal(1, n.Length, 6));
+            Assert.All(m.Normals, n => Assert.True(n.Y >= 0));
+        }
+
+        [Fact]
+        public void Mesh_IsTheSameEveryTime()
+        {
+            var a = CanyonMesh.Build(Layout());
+            var b = CanyonMesh.Build(Layout());
+            Assert.Equal(a.Positions, b.Positions);
+            Assert.Equal(a.Surfaces, b.Surfaces);
+        }
+
+        [Fact]
+        public void Mesh_StaysInsideTheDiorama()
+        {
+            var c = Layout();
+            var m = CanyonMesh.Build(c);
+            double back = Constants.Canyon.ClifftopDepthMeters;
+            foreach (var p in m.Positions)
+            {
+                var (along, across) = c.Local(p);
+                Assert.InRange(along, -back - 1e-9, c.Span + back + 1e-9);
+                Assert.InRange(across, -c.HalfWidth - 0.011, c.HalfWidth + 0.011);
+                Assert.InRange(p.Y, c.FloorY - Constants.Canyon.BaseThicknessMeters - 1e-9, c.NearTop + 0.25);
+            }
+        }
+
+        [Fact]
+        public void Walls_NeverReachIntoTheCanyon()
+        {
+            var c = Layout();
+            var m = CanyonMesh.Build(c);
+            for (int i = 0; i < m.Positions.Count; i++)
+            {
+                var s = m.Surfaces[i];
+                if (s != CanyonSurface.RockLight && s != CanyonSurface.RockDark)
+                    continue;
+                var (along, _) = c.Local(m.Positions[i]);
+                Assert.True(along <= 1e-9 || along >= c.Span - 1e-9, $"rock at along {along}");
+            }
+        }
+
+        [Fact]
+        public void RoadRunsOntoBothEnds_AndTheFloorAndRiverAreInPlace()
+        {
+            var c = Layout(0.9, 0.85);
+            var m = CanyonMesh.Build(c);
+            var road = Enumerable.Range(0, m.Positions.Count).Where(i => m.Surfaces[i] == CanyonSurface.Road).Select(i => c.Local(m.Positions[i])).ToList();
+            Assert.Contains(road, l => l.along < 0);
+            Assert.Contains(road, l => l.along > c.Span);
+            Assert.All(road, l => Assert.InRange(Math.Abs(l.across), 0, Constants.Surface.PadWidthMeters / 2 + 0.051));
+
+            var (from, to) = c.River();
+            for (int i = 0; i < m.Positions.Count; i++)
+            {
+                if (m.Surfaces[i] == CanyonSurface.River)
+                {
+                    Assert.True(m.Positions[i].Y < c.FloorY);
+                    Assert.InRange(c.Local(m.Positions[i]).along, from - 1e-9, to + 1e-9);
+                }
+                if (m.Surfaces[i] == CanyonSurface.Floor && m.Normals[i].Y > 0.9)
+                    Assert.Equal(c.FloorY, m.Positions[i].Y, 9);
+            }
+        }
+
+        [Fact]
+        public void TheTownStandsOnTheFarClifftop()
+        {
+            var c = Layout();
+            var m = CanyonMesh.Build(c);
+            var house = Enumerable.Range(0, m.Positions.Count).Where(i => m.Surfaces[i] == CanyonSurface.House || m.Surfaces[i] == CanyonSurface.Window).ToList();
+            Assert.NotEmpty(house);
+            Assert.All(house, i => Assert.True(c.Local(m.Positions[i]).along > c.Span));
+            Assert.True(c.Local(m.FlagTop).along > c.Span);
+            Assert.True(m.FlagTop.Y > c.FarTop + 0.1);
+        }
+
+        [Fact]
+        public void Snow_WhitensOnlyTheTops()
+        {
+            var m = CanyonMesh.Build(Layout());
+            var plain = new Rgb[m.Positions.Count];
+            var snowy = new Rgb[m.Positions.Count];
+            m.Colors(false, false, plain);
+            m.Colors(true, false, snowy);
+            for (int i = 0; i < plain.Length; i++)
+            {
+                bool changed = !plain[i].Equals(snowy[i]);
+                bool top = m.Normals[i].Y > 0.7;
+                if (changed)
+                    Assert.True(top, $"{m.Surfaces[i]} changed but faces sideways");
+                if (!top || m.Surfaces[i] == CanyonSurface.River || m.Surfaces[i] == CanyonSurface.Window)
+                    Assert.Equal(plain[i], snowy[i]);
+            }
+            Assert.Contains(Enumerable.Range(0, plain.Length), i => m.Surfaces[i] == CanyonSurface.Clifftop && !plain[i].Equals(snowy[i]));
+        }
+
+        [Fact]
+        public void Lights_ChangeOnlyTheWindows()
+        {
+            var m = CanyonMesh.Build(Layout());
+            var dark = new Rgb[m.Positions.Count];
+            var lit = new Rgb[m.Positions.Count];
+            m.Colors(false, false, dark);
+            m.Colors(false, true, lit);
+            for (int i = 0; i < dark.Length; i++)
+                Assert.Equal(m.Surfaces[i] == CanyonSurface.Window, !dark[i].Equals(lit[i]));
+        }
+    }
 }
