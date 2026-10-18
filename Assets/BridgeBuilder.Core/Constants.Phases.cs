@@ -12,10 +12,10 @@ namespace BridgeBuilder.Core
             public const double CloseCallUtilization = 0.8;
 
             /// <summary>
-            /// Material for the one level, in Constants.Budget price units; mirroring doubles each beam. Fits a wood
-            /// truss with cable diagonals and its deck, but not the same truss in concrete.
+            /// Material for the one level, in Constants.Budget price units (shown as dollars); mirroring doubles each
+            /// beam. Generous on purpose: room to experiment with every material, concrete included.
             /// </summary>
-            public const double LevelBudget = 120.0;
+            public const double LevelBudget = 1000.0;
         }
     }
 }

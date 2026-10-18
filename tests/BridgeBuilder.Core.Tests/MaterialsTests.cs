@@ -448,15 +448,21 @@ namespace BridgeBuilder.Core.Tests
             }
         }
 
+        /// <summary>
+        /// The $1,000 budget leaves room to try every material, concrete included; concrete is still the costly
+        /// choice, several times the price of the same truss in wood.
+        /// </summary>
         [Fact]
-        public void ConcreteTruss_CostsMoreThanEveryDefaultBudget()
+        public void ConcreteTruss_FitsTheBudget_ButCostsSeveralTimesWood()
         {
             var pads = Rooms.Pads();
-            var m = Rooms.Truss(pads, BridgeMaterial.Concrete);
-            double cost = TotalCost(m, pads);
-            _out.WriteLine($"concrete truss costs {cost:F1} (lines {m.Spent:F1})");
-            Assert.All(m.Members, x => Assert.Equal((int)BridgeMaterial.Concrete, x.SectionId));
-            Assert.All(DefaultChallenges, c => Assert.True(cost > c.Budget, $"{c.Name}: {cost:F1} <= {c.Budget}"));
+            var concrete = Rooms.Truss(pads, BridgeMaterial.Concrete);
+            double cost = TotalCost(concrete, pads);
+            double wood = TotalCost(Rooms.Truss(pads, BridgeMaterial.Wood), pads);
+            _out.WriteLine($"concrete truss costs {cost:F1} (lines {concrete.Spent:F1}); wood {wood:F1}");
+            Assert.All(concrete.Members, x => Assert.Equal((int)BridgeMaterial.Concrete, x.SectionId));
+            Assert.All(DefaultChallenges, c => Assert.True(cost <= c.Budget, $"{c.Name}: {cost:F1} > {c.Budget}"));
+            Assert.True(cost > 3 * wood, $"concrete {cost:F1} vs wood {wood:F1}");
         }
     }
 }
