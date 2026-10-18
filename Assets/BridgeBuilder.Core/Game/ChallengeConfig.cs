@@ -29,6 +29,14 @@ namespace BridgeBuilder.Core
             ScaleFactor = scale,
         };
 
+        /// <summary>The one level: the standard car, calm air, and the level budget. TestPhases adds the weather and traffic.</summary>
+        public static ChallengeConfig Level() => new ChallengeConfig
+        {
+            Name = "Bridge the gap",
+            Brief = "Build a bridge that survives calm, wind, snow, traffic and a rush-hour jam.",
+            Budget = Constants.Phases.LevelBudget,
+        };
+
         /// <summary>The game's starting challenges. Budgets are room meters of line at the default cost.</summary>
         public static ChallengeConfig[] Defaults() => new[]
         {

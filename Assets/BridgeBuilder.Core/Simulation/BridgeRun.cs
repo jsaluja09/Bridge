@@ -35,6 +35,7 @@ namespace BridgeBuilder.Core
         public int MembersLost;
         public double PeakUtilization;
         public double WorstUtilization;
+        public int WeakMember = -1;       // SolverInput index of the member to point at (BridgeRun.WeakMember)
     }
 
     /// <summary>
@@ -69,6 +70,19 @@ namespace BridgeBuilder.Core
         public double WorstUtilization { get; private set; }
         public int MembersLost => _lost.Count;
         public CoupledStep Coupled => _coupled;
+
+        /// <summary>The first member to break (SolverInput index), or -1.</summary>
+        public int FirstLostMember { get; private set; } = -1;
+        /// <summary>The visible member that came closest to breaking while the test ran, or -1.</summary>
+        public int PeakMember { get; private set; } = -1;
+        /// <summary>The member to point the player at: the first to break, else the one that came closest.</summary>
+        public int WeakMember => FirstLostMember >= 0 ? FirstLostMember : PeakMember;
+        /// <summary>The run timed out with nothing fallen.</summary>
+        public bool Stuck { get; private set; }
+
+        /// <summary>The run's outcome as phase feedback reads it.</summary>
+        public PhaseResult PhaseResult => new PhaseResult(Result == RunResult.Passed,
+            FirstLostMember >= 0 ? _coupled.Frame.BrokenMode[FirstLostMember] : FailureMode.None, Stuck, PeakUtilization);
 
         public BridgeRun(CompiledBridge bridge, RunConfiguration config, double? floorRoomHeight = null)
         {
@@ -139,7 +153,10 @@ namespace BridgeBuilder.Core
             else if (_airborne > Constants.Car.FallSeconds || car.Position.Y < LowestPadY() - 5)
                 Finish(RunResult.Failed, "The car fell.");
             else if (Time > Constants.Car.TimeoutSeconds)
+            {
+                Stuck = true;
                 Finish(RunResult.Failed, "The car got stuck.");
+            }
         }
 
         void StepTraffic(double dt)
@@ -156,7 +173,10 @@ namespace BridgeBuilder.Core
             else if (_traffic.Finished)
                 Finish(RunResult.Passed, _config.Traffic.Jam ? "The bridge held the traffic jam!" : $"All {_traffic.Crossed} cars made it across!");
             else if (Time > Constants.Traffic.TimeoutSeconds)
+            {
+                Stuck = true;
                 Finish(RunResult.Failed, "The traffic got stuck.");
+            }
         }
 
         void TrackMembers()
@@ -172,7 +192,11 @@ namespace BridgeBuilder.Core
 
         void Lose(int member)
         {
-            if (!_lost.Add(member) || Lesson.Length > 0)
+            if (!_lost.Add(member))
+                return;
+            if (FirstLostMember < 0)
+                FirstLostMember = member;
+            if (Lesson.Length > 0)
                 return;
             var mode = _coupled.Frame.BrokenMode[member];
             if (Bridge.Input.Members[member].HiddenBrace)
@@ -185,14 +209,21 @@ namespace BridgeBuilder.Core
         {
             var frame = _coupled.Frame;
             double worst = 0;
+            int worstMember = -1;
             for (int k = 0; k < Bridge.Input.Members.Count; k++)
             {
-                if (frame.InFrame[k] && !Bridge.Input.Members[k].HiddenBrace)
-                    worst = Math.Max(worst, frame.Utilization[k]);
+                if (frame.InFrame[k] && !Bridge.Input.Members[k].HiddenBrace && frame.Utilization[k] > worst)
+                {
+                    worst = frame.Utilization[k];
+                    worstMember = k;
+                }
             }
             WorstUtilization = worst;
-            if (Result == RunResult.Running)
-                PeakUtilization = Math.Max(PeakUtilization, Math.Min(1, worst));
+            if (Result == RunResult.Running && worstMember >= 0 && Math.Min(1, worst) > PeakUtilization)
+            {
+                PeakUtilization = Math.Min(1, worst);
+                PeakMember = worstMember;
+            }
         }
 
         void Finish(RunResult result, string message)
@@ -241,6 +272,7 @@ namespace BridgeBuilder.Core
             snap.MembersLost = MembersLost;
             snap.PeakUtilization = PeakUtilization;
             snap.WorstUtilization = WorstUtilization;
+            snap.WeakMember = WeakMember;
         }
 
         /// <summary>Runs to a result. For tests.</summary>
