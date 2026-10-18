@@ -13,9 +13,10 @@ namespace BridgeBuilder.Game
     {
         bool _drawing;
         readonly List<Vector3> _stroke = new List<Vector3>();
+        DrawVertex _strokeStart;      // what the stroke being drawn starts on
         readonly List<Vector3> _rejected = new List<Vector3>();
         float _rejectedUntil;
-        Vector3? _hover;              // the dot (or pad / floor spot) a stroke would join here
+        Vector3? _hover;              // the dot, point on a line, or pad / floor spot a stroke would join here
         int _hoverLine = -1;
         List<int> _blockedMembers = new List<int>();
         float _blockedUntil;
@@ -23,7 +24,6 @@ namespace BridgeBuilder.Game
         float _roadWarningUntil;
 
         bool Drawing => _drawing;
-        static double SnapRadius => Constants.Draw.SnapRadiusMeters;
 
         void ResetInput()
         {
@@ -41,7 +41,8 @@ namespace BridgeBuilder.Game
             {
                 _drawing = true;
                 _stroke.Clear();
-                _stroke.Add(HoverPoint(tip) ?? tip);
+                _strokeStart = FreeDraw.Target(tip.ToCore(), DrawContext());
+                _stroke.Add(_strokeStart.Joins ? _strokeStart.Position.ToUnity() : tip);
                 _scheduler.NotifyDrawStarted();
             }
             else if (_drawing && _pointer.TriggerHeld)
@@ -52,10 +53,12 @@ namespace BridgeBuilder.Game
             else if (_drawing)
             {
                 _drawing = false;
+                if (Vector3.Distance(_stroke[_stroke.Count - 1], tip) > 0.0005f)
+                    _stroke.Add(tip);
                 FinishStroke();
             }
 
-            _hover = _drawing ? null : HoverPoint(tip);
+            _hover = HoverPoint(tip);
             _hoverLine = _drawing ? -1 : PickLine(tip.ToCore());
 
             if (_pointer.GripPressed && !_drawing)
@@ -93,47 +96,29 @@ namespace BridgeBuilder.Game
             }
         }
 
-        /// <summary>The dot, pad top or floor dot the tip would join, if any.</summary>
+        FreeDraw.Context DrawContext() => new FreeDraw.Context
+        {
+            Nodes = _model.Nodes,
+            Members = _model.Members,
+            Joined = (a, b) => _model.Members.Any(m => (m.NodeA == a && m.NodeB == b) || (m.NodeA == b && m.NodeB == a)),
+            Pads = _pads,
+            GroundDots = _groundDots,
+        };
+
+        /// <summary>
+        /// The dot, point on a line, pad top or floor dot the tip would join, if any. While drawing, this is
+        /// where the stroke's end would join (spec 11.5).
+        /// </summary>
         Vector3? HoverPoint(Vector3 tip)
         {
-            Vec3 p = tip.ToCore();
-            Node best = null;
-            double bestDist = SnapRadius;
-            foreach (var n in _model.Nodes)
-            {
-                double d = Vec3.Distance(n.Position, p);
-                if (d <= bestDist)
-                {
-                    best = n;
-                    bestDist = d;
-                }
-            }
-            if (best != null)
-                return best.Position.ToUnity();
-            foreach (var pad in _pads)
-            {
-                if (pad.TrySupportPoint(p, SnapRadius, out Vec3 support))
-                    return support.ToUnity();
-            }
-            foreach (var g in _groundDots)
-            {
-                if (Vec3.Distance(g, p) <= SnapRadius)
-                    return g.ToUnity();
-            }
-            return null;
+            var target = FreeDraw.Target(tip.ToCore(), DrawContext(), _drawing ? _strokeStart : (DrawVertex?)null);
+            return target.Joins ? target.Position.ToUnity() : (Vector3?)null;
         }
 
         void FinishStroke()
         {
             var raw = _stroke.Select(v => v.ToCore()).ToList();
-            var ctx = new FreeDraw.Context
-            {
-                Nodes = _model.Nodes,
-                Joined = (a, b) => _model.Members.Any(m => (m.NodeA == a && m.NodeB == b) || (m.NodeA == b && m.NodeB == a)),
-                Pads = _pads,
-                GroundDots = _groundDots,
-            };
-            var chains = FreeDraw.Build(raw, ctx, out _);
+            var chains = FreeDraw.Build(raw, DrawContext(), out _);
             if (chains.Count == 0)
             {
                 Reject("Draw a little longer");
@@ -147,6 +132,8 @@ namespace BridgeBuilder.Game
                 {
                     if (v.IsExisting)
                         vertices.Add(LineVertex.Existing(v.ExistingId));
+                    else if (v.IsOnMember)
+                        vertices.Add(LineVertex.OnMember(v.MemberId, v.Position));
                     else if (v.NewSupport)
                         vertices.Add(LineVertex.Existing(_model.AddFixedNode(v.Position, v.SurfaceId, v.Ground)));
                     else

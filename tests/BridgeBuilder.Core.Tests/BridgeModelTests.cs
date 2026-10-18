@@ -1,5 +1,4 @@
 using System.Linq;
-using System.Reflection;
 using BridgeBuilder.Core;
 using Xunit;
 
@@ -194,7 +193,7 @@ namespace BridgeBuilder.Core.Tests
         }
 
         [Fact]
-        public void NoSplitApi_ExistingMemberCountUnchangedAfterAttach()
+        public void AttachAtExistingNode_LeavesExistingMemberUnchanged()
         {
             var m = new BridgeModel(Policy());
             int a = m.AddFixedNode(Vec3.Zero);
@@ -205,8 +204,6 @@ namespace BridgeBuilder.Core.Tests
             Assert.Equal(original.NodeA, m.Members[0].NodeA);
             Assert.Equal(original.NodeB, m.Members[0].NodeB);
             Assert.Equal(2, m.Members.Count);
-            var names = typeof(BridgeModel).GetMethods(BindingFlags.Public | BindingFlags.Instance).Select(x => x.Name);
-            Assert.DoesNotContain(names, n => n.Contains("Split") || n.Contains("InsertNode") || n.Contains("Subdivide"));
         }
 
         [Fact]

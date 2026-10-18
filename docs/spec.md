@@ -37,7 +37,7 @@ A mixed-reality physics game for Quest 2 (Unity, Meta XR SDK). The player marks 
 
 - Each line is divided into the nearest whole number of **equal segments**, targeting about **10 cm** spacing. This avoids tiny runt segments.
 - Every snap point is a solver node. Every segment between two nodes is a frame element.
-- Attaching a new line means starting it from an existing node. No member is ever split.
+- Attaching a new line means starting it from an existing node, or from a point on an existing line between its nodes. That member is split in two there, so both lines share the new node. *(Changed: see 11.5.)*
 - Node count is roughly total line length divided by spacing, which gives a direct formula for the performance cap.
 - The spacing value is a tuning constant, settled in the headset.
 
@@ -237,3 +237,11 @@ There is no fill or road tool. Two lines that are each flat (under the road slop
 ### 11.4 Delete
 
 Squeezing grip while touching a line deletes it (blocked lines flash, as in 2.11). B undoes, X clears.
+
+### 11.5 Joining lines
+
+Lines drawn to a dot that other lines already share sometimes failed to join it, or did not form at all. Three changes:
+
+- A stroke that starts on, ends on, or crosses a line between its dots joins that line there: the member is split in two and both lines share the new dot. A stroke that runs along a line, within a small angle, does not split it. The split dot belongs to the line it split, so that line stays blocked from deletion while another line uses the dot (2.11). Deleting the line that caused a split merges the member back once no other line uses that dot.
+- A line drawn from or to a shared dot stays on that dot, even when it leaves at a narrow angle to a line already there. Only a stroke that runs almost exactly along an existing line counts as tracing over it, and the overlap is dropped.
+- While the player draws, the dot or point on a line that the stroke would join is highlighted.

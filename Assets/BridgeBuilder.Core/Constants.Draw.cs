@@ -10,6 +10,12 @@ namespace BridgeBuilder.Core
             public const int SmoothingWindow = 3;            // GUESS: samples each side (1 cm apart) in the moving average
 
             /// <summary>
+            /// Spec 11.5: a stroke within this angle of an existing line runs along it. Leaving a shared dot, it
+            /// traces over that line (the overlap is dropped); passing a line, it doesn't split it. GUESS.
+            /// </summary>
+            public const double RetraceAngleDegrees = 10;
+
+            /// <summary>
             /// Spec 11.2: pads and floor dots add supports on demand; these don't add equations, so the game's
             /// node cap is Human.NodeCap plus this allowance. GUESS.
             /// </summary>

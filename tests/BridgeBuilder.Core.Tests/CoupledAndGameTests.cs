@@ -74,26 +74,40 @@ namespace BridgeBuilder.Core.Tests
             for (int c = 0; c + 1 < corners.Length; c++)
                 for (int i = 0; i <= 30; i++)
                     raw.Add(Vec3.Lerp(corners[c], corners[c + 1], i / 30.0) + new Vec3(rng.NextDouble() - 0.5, rng.NextDouble() - 0.5, rng.NextDouble() - 0.5) * 0.002);
-            var ctx = new FreeDraw.Context
-            {
-                Nodes = m.Nodes,
-                Joined = (x, y) => m.Members.Any(k => (k.NodeA == x && k.NodeB == y) || (k.NodeA == y && k.NodeB == x)),
-                Pads = pads,
-            };
-            foreach (var chain in FreeDraw.Build(raw, ctx, out _))
+            DrawStroke(m, pads, raw);
+        }
+
+        public static FreeDraw.Context Context(BridgeModel m, Pad[] pads) => new FreeDraw.Context
+        {
+            Nodes = m.Nodes,
+            Members = m.Members,
+            Joined = (x, y) => m.Members.Any(k => (k.NodeA == x && k.NodeB == y) || (k.NodeA == y && k.NodeB == x)),
+            Pads = pads,
+        };
+
+        /// <summary>Adds a raw stroke like BridgeGame.FinishStroke; returns the ids of the lines it made.</summary>
+        public static List<int> DrawStroke(BridgeModel m, Pad[] pads, List<Vec3> raw)
+        {
+            var lines = new List<int>();
+            foreach (var chain in FreeDraw.Build(raw, Context(m, pads), out _))
             {
                 var vertices = new List<LineVertex>();
                 foreach (var v in chain)
                 {
                     if (v.IsExisting)
                         vertices.Add(LineVertex.Existing(v.ExistingId));
+                    else if (v.IsOnMember)
+                        vertices.Add(LineVertex.OnMember(v.MemberId, v.Position));
                     else if (v.NewSupport)
                         vertices.Add(LineVertex.Existing(m.AddFixedNode(v.Position, v.SurfaceId, v.Ground)));
                     else
                         vertices.Add(LineVertex.New(v.Position));
                 }
-                Assert.True(m.TryAddFreeLine(vertices).Ok);
+                var result = m.TryAddFreeLine(vertices);
+                Assert.True(result.Ok);
+                lines.Add(result.Id);
             }
+            return lines;
         }
 
         public static Vec3 P(double x, double y, double z) => new Vec3(x, y, z);
