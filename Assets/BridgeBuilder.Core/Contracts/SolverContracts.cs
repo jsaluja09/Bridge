@@ -63,6 +63,7 @@ namespace BridgeBuilder.Core
         public double? GroundHeightOverride { get; set; }  // absolute height
         public double ScaleFactor { get; set; }
         public TrafficSpec Traffic { get; set; }              // extension: null = the single test car
+        public double SnowLoadPa { get; set; }                 // extension: snow on the road, pascals (0 = none)
     }
 
     public sealed class CarState

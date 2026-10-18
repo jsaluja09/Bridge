@@ -82,7 +82,7 @@ namespace BridgeBuilder.Core
             var start = bridge.Pads[config.StartSurfaceId];
             _far = bridge.Pads[1 - config.StartSurfaceId];
             _gap = start.Forward;
-            ApplyWind();
+            ApplyWeather();
             _coupled.Reset(bridge.Input, config);
             if (config.Traffic != null)
             {
@@ -97,34 +97,17 @@ namespace BridgeBuilder.Core
         /// <summary>Bridge-world height of the lower pad.</summary>
         double LowestPadY() => Math.Min(_far.Height, Bridge.Pads[_config.StartSurfaceId].Height) * _scale;
 
-        /// <summary>Wind as static drag on members and a steady side force on the car (HG-car-and-wind: GUESS model).</summary>
-        void ApplyWind()
+        /// <summary>Wind on members and cars, and snow on the road, as constant loads.</summary>
+        void ApplyWeather()
         {
-            double v = _config.WindSpeed;
-            if (v <= 0 || _config.WindDirection.LengthSquared <= 0)
+            if (_config.WindSpeed <= 0 && _config.SnowLoadPa <= 0)
                 return;
-            Vec3 w = _config.WindDirection.Normalized();
-            double q = 0.5 * Constants.Car.AirDensity * v * v;
-            var input = Bridge.Input;
-            var index = Bridge.NodeIndex;
-            var loads = new Vec3[input.Nodes.Count];
-            foreach (var m in input.Members)
-            {
-                Vec3 a = input.Nodes[index[m.NodeA]].Position * _scale, b = input.Nodes[index[m.NodeB]].Position * _scale;
-                double len = Vec3.Distance(a, b);
-                if (len <= 0)
-                    continue;
-                Vec3 axis = (b - a) / len;
-                Vec3 cross = w - axis * Vec3.Dot(w, axis);          // only the cross-flow part pushes
-                Vec3 f = cross * (q * Constants.Car.MemberDragCoefficient * Constants.Car.MemberDiameter * len);
-                loads[index[m.NodeA]] += f * 0.5;
-                loads[index[m.NodeB]] += f * 0.5;
-            }
-            _coupled.ExtraStaticLoads = loads;
-
-            Vec3 side = Vec3.Cross(Vec3.UnitY, _gap);
-            double area = Constants.Car.SideArea * Math.Abs(Vec3.Dot(w, side)) + Constants.Car.FrontArea * Math.Abs(Vec3.Dot(w, _gap));
-            _coupled.ExternalCarForce = w * (q * Constants.Car.DragCoefficient * area);
+            var wind = Weather.WindLoads(Bridge, _config.WindDirection, _config.WindSpeed, _scale);
+            var snow = Weather.SnowLoads(Bridge, _config.SnowLoadPa, _scale);
+            for (int i = 0; i < wind.Length; i++)
+                wind[i] += snow[i];
+            _coupled.ExtraStaticLoads = wind;
+            _coupled.ExternalCarForce = Weather.WindOnCar(_config.WindDirection, _config.WindSpeed, _gap);
         }
 
         public void Step(double dt)
