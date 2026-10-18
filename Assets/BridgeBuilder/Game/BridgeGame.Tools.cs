@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using BridgeBuilder.Core;
 using UnityEngine;
 
@@ -11,20 +12,18 @@ namespace BridgeBuilder.Game
     public sealed partial class BridgeGame
     {
         bool _drawing;
+        bool _mirror = true;          // copy each beam across the road's centerline
         readonly List<Vector3> _stroke = new List<Vector3>();
+        DrawVertex _strokeStart;      // what the stroke being drawn starts on
         readonly StrokeFeedback _strokeFx = new StrokeFeedback();
-        Vector3? _hover;              // the dot (or pad / floor spot) a stroke would join here
+        Vector3? _hover;              // the dot, point on a line, or pad / floor spot a stroke would join here
         int _hoverLine = -1;
         List<int> _blockedMembers = new List<int>();
         float _blockedUntil;
         float _clearArmedUntil;
         float _roadWarningUntil;
 
-        bool _mirror = true;          // copy each beam across the road's centerline
-
         bool Drawing => _drawing;
-        static double SnapRadius => Constants.Draw.SnapRadiusMeters;
-        MirrorPlane? MirrorPlaneNow => _mirror && _pads != null ? MirrorPlane.Centerline(_pads[0], _pads[1]) : (MirrorPlane?)null;
 
         void ResetInput()
         {
@@ -43,7 +42,8 @@ namespace BridgeBuilder.Game
             {
                 _drawing = true;
                 _stroke.Clear();
-                _stroke.Add(HoverPoint(tip) ?? tip);
+                _strokeStart = FreeDraw.Target(tip.ToCore(), DrawContext());
+                _stroke.Add(_strokeStart.Joins ? _strokeStart.Position.ToUnity() : tip);
                 _strokeFx.Clear();
                 _scheduler.NotifyDrawStarted();
             }
@@ -51,15 +51,17 @@ namespace BridgeBuilder.Game
             {
                 if (Vector3.Distance(_stroke[_stroke.Count - 1], tip) > 0.005f)
                     _stroke.Add(tip);
-                _strokeFx.UpdateGhost(_stroke, _model, MirrorPlaneNow, Time.time);      // W4-04: ghost of the resolved, snapped shape
+                _strokeFx.UpdateGhost(_stroke, _model, StrokeContext(), Time.time);      // W4-04: ghost of what the stroke will build
             }
             else if (_drawing)
             {
                 _drawing = false;
+                if (Vector3.Distance(_stroke[_stroke.Count - 1], tip) > 0.0005f)
+                    _stroke.Add(tip);
                 FinishStroke();
             }
 
-            _hover = _drawing ? null : HoverPoint(tip);
+            _hover = HoverPoint(tip);
             _hoverLine = _drawing ? -1 : PickLine(tip.ToCore());
 
             if (_pointer.GripPressed && !_drawing)
@@ -97,55 +99,44 @@ namespace BridgeBuilder.Game
             }
         }
 
-        /// <summary>The dot, pad top or floor dot the tip would join, if any.</summary>
+        StrokeBuilder.Context StrokeContext() => new StrokeBuilder.Context
+        {
+            Pads = _pads,
+            GroundDots = _groundDots,
+            Mirror = _mirror ? MirrorPlane.Centerline(_pads[0], _pads[1]) : (MirrorPlane?)null,
+        };
+
+        FreeDraw.Context DrawContext() => StrokeBuilder.DrawContext(_model, StrokeContext());
+
+        /// <summary>
+        /// The dot, point on a line, pad top or floor dot the tip would join, if any. While drawing, this is
+        /// where the stroke's end would join (spec 11.5).
+        /// </summary>
         Vector3? HoverPoint(Vector3 tip)
         {
-            Vec3 p = tip.ToCore();
-            Node best = null;
-            double bestDist = SnapRadius;
-            foreach (var n in _model.Nodes)
-            {
-                double d = Vec3.Distance(n.Position, p);
-                if (d <= bestDist)
-                {
-                    best = n;
-                    bestDist = d;
-                }
-            }
-            if (best != null)
-                return best.Position.ToUnity();
-            foreach (var pad in _pads)
-            {
-                if (pad.TrySupportPoint(p, SnapRadius, out Vec3 support))
-                    return support.ToUnity();
-            }
-            foreach (var g in _groundDots)
-            {
-                if (Vec3.Distance(g, p) <= SnapRadius)
-                    return g.ToUnity();
-            }
-            return null;
+            var target = FreeDraw.Target(tip.ToCore(), DrawContext(), _drawing ? _strokeStart : (DrawVertex?)null);
+            return target.Joins ? target.Position.ToUnity() : (Vector3?)null;
         }
 
         /// <summary>
-        /// Builds the resolved shape (W4-04), not the raw stroke: one piece for a line or arc, one per side of a
-        /// polyline so its corners land exactly. A stroke that fits no shape is built as a straight beam; one too
-        /// short for a beam flashes red with no message.
+        /// Builds what the stroke turns into (W4-04): FreeDraw's chains (a squiggle becomes a straight beam), or the
+        /// shifted copy of the line it was drawn beside (W4-02), plus its mirror copy across the road. It goes in whole
+        /// or not at all, as one undo step.
         /// </summary>
         void FinishStroke()
         {
-            var pieces = StrokeFeedback.Pieces(_stroke, _model);
-            if (pieces == null)
+            var ctx = StrokeContext();
+            var shaped = StrokeBuilder.Shape(_stroke.Select(v => v.ToCore()).ToList(), _model, ctx);
+            if (shaped.IsEmpty)
             {
-                Reject(null);
+                Reject("Draw a little longer");
                 return;
             }
 
-            var ctx = new StrokeBuilder.Context { Pads = _pads, GroundDots = _groundDots, Mirror = MirrorPlaneNow };
-            var result = StrokeBuilder.Build(_model, pieces, ctx);
+            var result = StrokeBuilder.Build(_model, shaped, ctx);
             if (!result.Ok)
             {
-                Reject(result.Reason == EditReason.BudgetExceeded ? "Out of material. Delete or undo something first." : null);
+                Reject(result.Reason == EditReason.BudgetExceeded ? "Out of material. Delete or undo something first." : "That line didn't work. Try again.");
                 return;
             }
             _stroke.Clear();

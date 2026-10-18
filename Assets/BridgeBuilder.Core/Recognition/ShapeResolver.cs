@@ -36,8 +36,6 @@ namespace BridgeBuilder.Core
         public double Sweep;
         /// <summary>RMS distance from the smoothed stroke to this shape, over the stroke's length.</summary>
         public double Residual;
-        /// <summary>The stroke fit no shape and was replaced by a straight line between its ends (forgiving drawing).</summary>
-        public bool Straightened;
 
         public bool Valid => Kind != ResolvedKind.Invalid;
         public int Segments => Kind == ResolvedKind.Polyline ? Points.Count - 1 : Kind == ResolvedKind.Invalid ? 0 : 1;
@@ -122,22 +120,6 @@ namespace BridgeBuilder.Core
                 return ResolvedShape.Invalid(InvalidReason.SelfIntersecting, best.Residual);
             Check(best);
             return best;
-        }
-
-        /// <summary>
-        /// Resolve, but forgiving: a stroke that fits no shape becomes a straight line from its first point to its
-        /// last (marked Straightened), so a messy stroke still builds something. Only a stroke whose ends are too
-        /// close together to make a beam stays Invalid (TooShort).
-        /// </summary>
-        public static ResolvedShape ResolveOrStraighten(IReadOnlyList<Vec3> stroke)
-        {
-            var shape = Resolve(stroke);
-            if (shape.Valid || shape.Reason == InvalidReason.TooShort)
-                return shape;
-            Vec3 a = stroke[0], b = stroke[stroke.Count - 1];
-            if (!(Vec3.Distance(a, b) >= Constants.Resolver.ResolverMinStrokeLength))
-                return ResolvedShape.Invalid(InvalidReason.TooShort, shape.Residual);
-            return new ResolvedShape { Kind = ResolvedKind.Line, Points = { a, b }, Residual = shape.Residual, Straightened = true };
         }
 
         // ---------- Candidates ----------

@@ -39,21 +39,25 @@ namespace BridgeBuilder.Core
         };
     }
 
-    /// <summary>A line vertex: an existing node, or a new point in room units.</summary>
+    /// <summary>A line vertex: an existing node, a new point in room units, or a new point on an existing member.</summary>
     public readonly struct LineVertex
     {
         public readonly int ExistingId;      // -1 for a new point
+        public readonly int MemberId;        // >= 0: the new point splits this member (spec 11.5)
         public readonly Vec3 Position;
 
-        LineVertex(int id, Vec3 p)
+        LineVertex(int id, int memberId, Vec3 p)
         {
             ExistingId = id;
+            MemberId = memberId;
             Position = p;
         }
 
-        public static LineVertex Existing(int id) => new LineVertex(id, default);
-        public static LineVertex New(Vec3 position) => new LineVertex(-1, position);
+        public static LineVertex Existing(int id) => new LineVertex(id, -1, default);
+        public static LineVertex New(Vec3 position) => new LineVertex(-1, -1, position);
+        public static LineVertex OnMember(int memberId, Vec3 position) => new LineVertex(-1, memberId, position);
         public bool IsExisting => ExistingId >= 0;
+        public bool IsOnMember => !IsExisting && MemberId >= 0;
     }
 
     public sealed class EditResult
@@ -71,8 +75,8 @@ namespace BridgeBuilder.Core
 
     /// <summary>
     /// The player's bridge (spec 2.3, 2.4, 2.9, 2.11): nodes, members, lines and fills with budget, hidden node
-    /// cap, one undo stack and delete rules. Every successful mutation pushes one snapshot. No member is ever
-    /// split; tests run on Copy().
+    /// cap, one undo stack and delete rules. Every successful mutation pushes one snapshot. A line that joins
+    /// another between its nodes splits that member (spec 11.5); tests run on Copy().
     /// </summary>
     public sealed class BridgeModel
     {
@@ -83,6 +87,7 @@ namespace BridgeBuilder.Core
             public List<Line> Lines = new List<Line>();
             public List<Fill> Fills = new List<Fill>();
             public Dictionary<int, int> Creator = new Dictionary<int, int>();   // node id -> line that created it
+            public HashSet<int> SplitNodes = new HashSet<int>();                // nodes added by splitting a member
             public double Spent;
             public int NextId = 1;
 
@@ -93,6 +98,7 @@ namespace BridgeBuilder.Core
                 Lines = Lines.Select(l => new Line { Id = l.Id, Members = new List<int>(l.Members) }).ToList(),
                 Fills = Fills.Select(f => new Fill { Id = f.Id, Loop = new List<int>(f.Loop), Road = f.Road, Valid = f.Valid }).ToList(),
                 Creator = new Dictionary<int, int>(Creator),
+                SplitNodes = new HashSet<int>(SplitNodes),
                 Spent = Spent,
                 NextId = NextId,
             };
@@ -178,7 +184,10 @@ namespace BridgeBuilder.Core
             return id;
         }
 
-        /// <summary>A line through the given vertices; the first must be an existing node (spec 2.3).</summary>
+        /// <summary>
+        /// A line through the given vertices; the first must be an existing node or a point on an existing
+        /// member (spec 2.3). Points on members split them, in the same edit (spec 11.5).
+        /// </summary>
         public EditResult TryAddLine(IReadOnlyList<LineVertex> vertices, int sectionId = 0) => AddLine(vertices, sectionId, false);
 
         /// <summary>
@@ -186,26 +195,65 @@ namespace BridgeBuilder.Core
         /// </summary>
         public EditResult TryAddFreeLine(IReadOnlyList<LineVertex> vertices, int sectionId = 0) => AddLine(vertices, sectionId, true);
 
+        sealed class Split
+        {
+            public Member Member;
+            public double T;
+            public Vec3 Position;
+            public int NodeId;
+        }
+
+        const double OnMemberTolerance = 1e-6;     // room meters
+
         EditResult AddLine(IReadOnlyList<LineVertex> vertices, int sectionId, bool freeStart)
         {
             if (vertices == null || vertices.Count < 2)
                 return EditResult.Fail(EditReason.InvalidLine);
-            if (!vertices[0].IsExisting && !freeStart)
+            if (!vertices[0].IsExisting && !vertices[0].IsOnMember && !freeStart)
                 return EditResult.Fail(EditReason.MissingStartNode);
             if (vertices[0].IsExisting && GetNode(vertices[0].ExistingId) == null)
                 return EditResult.Fail(EditReason.MissingStartNode);
 
             var points = new List<Vec3>();
+            var existing = new int[vertices.Count];      // node id, or -1 for a new node
+            var onSplit = new int[vertices.Count];       // index into splits, or -1
+            var splits = new List<Split>();
             int newNodes = 0;
             for (int i = 0; i < vertices.Count; i++)
             {
                 var v = vertices[i];
+                existing[i] = -1;
+                onSplit[i] = -1;
                 if (v.IsExisting)
                 {
                     var n = GetNode(v.ExistingId);
                     if (n == null)
                         return EditResult.Fail(EditReason.UnknownNode);
+                    existing[i] = n.Id;
                     points.Add(n.Position);
+                }
+                else if (v.IsOnMember)
+                {
+                    if (!v.Position.IsFinite || !TryLocate(v.MemberId, v.Position, out var piece, out double t, out int nodeId))
+                        return EditResult.Fail(EditReason.InvalidLine);
+                    if (nodeId >= 0)
+                    {
+                        existing[i] = nodeId;
+                        points.Add(GetNode(nodeId).Position);
+                    }
+                    else
+                    {
+                        Vec3 p = Vec3.Lerp(GetNode(piece.NodeA).Position, GetNode(piece.NodeB).Position, t);
+                        int k = splits.FindIndex(s => s.Member == piece && Vec3.Distance(s.Position, p) <= OnMemberTolerance);
+                        if (k < 0)
+                        {
+                            splits.Add(new Split { Member = piece, T = t, Position = p });
+                            k = splits.Count - 1;
+                            newNodes++;
+                        }
+                        onSplit[i] = k;
+                        points.Add(p);
+                    }
                 }
                 else
                 {
@@ -229,12 +277,14 @@ namespace BridgeBuilder.Core
 
             Push();
             var line = new Line { Id = _s.NextId++ };
+            foreach (var group in splits.GroupBy(s => s.Member))
+                SplitMember(group.Key, group.OrderBy(s => s.T).ToList());
             var ids = new int[vertices.Count];
             for (int i = 0; i < vertices.Count; i++)
             {
-                if (vertices[i].IsExisting)
+                if (existing[i] >= 0 || onSplit[i] >= 0)
                 {
-                    ids[i] = vertices[i].ExistingId;
+                    ids[i] = existing[i] >= 0 ? existing[i] : splits[onSplit[i]].NodeId;
                     continue;
                 }
                 int id = _s.NextId++;
@@ -252,6 +302,124 @@ namespace BridgeBuilder.Core
             _s.Spent += cost;
             return EditResult.Success(line.Id);
         }
+
+        /// <summary>
+        /// Where p lies on the line that memberId belongs to (an earlier split may have moved it onto another
+        /// piece of that line): the piece and the fraction t along it, or the node p sits on.
+        /// </summary>
+        bool TryLocate(int memberId, Vec3 p, out Member piece, out double t, out int nodeId)
+        {
+            piece = null;
+            t = 0;
+            nodeId = -1;
+            var member = GetMember(memberId);
+            if (member == null || member.LineId < 0)
+                return false;
+            double best = OnMemberTolerance;
+            foreach (var m in _s.Members)
+            {
+                if (m.LineId != member.LineId)
+                    continue;
+                Vec3 q = Geometry.ClosestOnSegment(p, GetNode(m.NodeA).Position, GetNode(m.NodeB).Position, out double u);
+                double d = Vec3.Distance(p, q);
+                if (d <= best)
+                {
+                    best = d;
+                    piece = m;
+                    t = u;
+                }
+            }
+            if (piece == null)
+                return false;
+            double length = Vec3.Distance(GetNode(piece.NodeA).Position, GetNode(piece.NodeB).Position);
+            if (t * length <= OnMemberTolerance)
+                nodeId = piece.NodeA;
+            else if ((1 - t) * length <= OnMemberTolerance)
+                nodeId = piece.NodeB;
+            return true;
+        }
+
+        /// <summary>
+        /// Splits a member at points sorted along it (spec 11.5). The new nodes belong to the member's line, and
+        /// fills along the member get them in their loops.
+        /// </summary>
+        void SplitMember(Member member, List<Split> points)
+        {
+            var line = GetLine(member.LineId);
+            int start = member.NodeA, end = member.NodeB;
+            var ids = new List<int>();
+            foreach (var s in points)
+            {
+                s.NodeId = _s.NextId++;
+                _s.Nodes.Add(new Node { Id = s.NodeId, Position = s.Position });
+                _s.Creator[s.NodeId] = member.LineId;
+                _s.SplitNodes.Add(s.NodeId);
+                ids.Add(s.NodeId);
+            }
+
+            member.NodeB = ids[0];
+            int at = _s.Members.IndexOf(member), inLine = line.Members.IndexOf(member.Id);
+            for (int k = 0; k < ids.Count; k++)
+            {
+                var piece = new Member
+                {
+                    Id = _s.NextId++, NodeA = ids[k], NodeB = k + 1 < ids.Count ? ids[k + 1] : end,
+                    SectionId = member.SectionId, LineId = member.LineId,
+                };
+                _s.Members.Insert(at + 1 + k, piece);
+                line.Members.Insert(inLine + 1 + k, piece.Id);
+            }
+
+            foreach (var fill in _s.Fills)
+            {
+                for (int i = 0; i < fill.Loop.Count; i++)
+                {
+                    int a = fill.Loop[i], b = fill.Loop[(i + 1) % fill.Loop.Count];
+                    if ((a == start && b == end) || (a == end && b == start))
+                    {
+                        fill.Loop.InsertRange(i + 1, a == start ? ids : Enumerable.Reverse(ids));
+                        break;
+                    }
+                }
+            }
+        }
+
+        /// <summary>Rejoins the two pieces of a split member once nothing else uses the split node (spec 11.5).</summary>
+        void MergeSplits()
+        {
+            foreach (int id in _s.SplitNodes.ToList())
+            {
+                var at = _s.Members.Where(m => m.NodeA == id || m.NodeB == id).ToList();
+                if (at.Count != 2 || at[0].LineId != at[1].LineId)
+                    continue;
+                var line = GetLine(at[0].LineId);
+                if (line == null)
+                    continue;
+                bool inOrder = line.Members.IndexOf(at[0].Id) < line.Members.IndexOf(at[1].Id);
+                Member first = inOrder ? at[0] : at[1], second = inOrder ? at[1] : at[0];
+                if (first.NodeB != id || second.NodeA != id || FillCorner(id, first.NodeA, second.NodeB))
+                    continue;
+
+                first.NodeB = second.NodeB;
+                _s.Members.Remove(second);
+                line.Members.Remove(second.Id);
+                _s.Nodes.RemoveAll(n => n.Id == id);
+                _s.Creator.Remove(id);
+                _s.SplitNodes.Remove(id);
+                foreach (var fill in _s.Fills)
+                    fill.Loop.Remove(id);
+            }
+        }
+
+        /// <summary>True if a fill turns a corner at the node, rather than passing straight through it from a to b.</summary>
+        bool FillCorner(int id, int a, int b) => _s.Fills.Any(f =>
+        {
+            int i = f.Loop.IndexOf(id);
+            if (i < 0)
+                return false;
+            int p = f.Loop[(i + f.Loop.Count - 1) % f.Loop.Count], q = f.Loop[(i + 1) % f.Loop.Count];
+            return !((p == a && q == b) || (p == b && q == a));
+        });
 
         /// <summary>Fill bracing (spec 2.4): a hidden member between existing nodes. Free; never creates nodes.</summary>
         public EditResult TryAddHiddenBrace(int nodeA, int nodeB, int sectionId)
@@ -318,8 +486,12 @@ namespace BridgeBuilder.Core
             _s.Members.RemoveAll(m => m.HiddenBrace && (created.Contains(m.NodeA) || created.Contains(m.NodeB)));
             _s.Nodes.RemoveAll(n => created.Contains(n.Id));
             foreach (int id in created)
+            {
                 _s.Creator.Remove(id);
+                _s.SplitNodes.Remove(id);
+            }
             _s.Lines.Remove(line);
+            MergeSplits();
             _s.Spent = Math.Max(0, _s.Spent);
             result.Ok = true;
             return result;
@@ -360,6 +532,7 @@ namespace BridgeBuilder.Core
             _s.Fills.Clear();
             _s.Nodes.RemoveAll(n => !n.Fixed);
             _s.Creator.Clear();
+            _s.SplitNodes.Clear();
             _s.Spent = 0;
         }
 

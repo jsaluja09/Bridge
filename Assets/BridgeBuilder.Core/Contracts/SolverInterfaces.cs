@@ -29,6 +29,7 @@ namespace BridgeBuilder.Core
         Arc,
         Polyline,
         Rejected,
+        Curve,
     }
 
     public enum RejectionReason

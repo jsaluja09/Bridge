@@ -5,28 +5,39 @@ using Xunit;
 
 namespace BridgeBuilder.Core.Tests
 {
-    /// <summary>Forgiving drawing: a stroke that fits no shape becomes a straight beam between its ends.</summary>
+    /// <summary>
+    /// Forgiving drawing on top of FreeDraw: a stroke FreeDraw can't read (a squiggle) becomes a straight beam
+    /// between its ends; only a stroke too short to be a beam is still refused.
+    /// </summary>
     public class ForgivingDrawingTests
     {
         static Vec3 P(double x, double y, double z = 0) => new Vec3(x, y, z);
 
+        static StrokeBuilder.Context Ctx() => new StrokeBuilder.Context { Pads = Rooms.Pads() };
+
+        static FreeDraw.Context Draw(BridgeModel m) => StrokeBuilder.DrawContext(m, Ctx());
+
         [Fact]
-        public void Scribble_BecomesAStraightLineBetweenItsEnds()
+        public void Scribble_BecomesAStraightBeamBetweenItsEnds()
         {
-            var stroke = ShapeResolverTests.Scribble(7, P(0.3, 1, 0));
-            Assert.False(ShapeResolver.Resolve(stroke).Valid);
+            var m = Rooms.Model();
+            var stroke = ShapeResolverTests.Scribble(7, P(0.3, 1.2, 0));
+            Assert.Empty(FreeDraw.Build(stroke, Draw(m), out _, out var reason));
+            Assert.Equal(RejectionReason.Unrecognized, reason);
 
-            var s = ShapeResolver.ResolveOrStraighten(stroke);
+            var shaped = StrokeBuilder.Shape(stroke, m, Ctx());
 
-            Assert.Equal(ResolvedKind.Line, s.Kind);
-            Assert.True(s.Straightened);
-            Assert.Equal(stroke[0], s.Points[0]);
-            Assert.Equal(stroke[stroke.Count - 1], s.Points[1]);
-            Assert.True(double.IsFinite(s.Residual));
+            Assert.True(shaped.Straightened);
+            var chain = Assert.Single(shaped.Chains);
+            Assert.True(Vec3.Distance(stroke[0], chain[0].Position) < 0.01);
+            Assert.True(Vec3.Distance(stroke[stroke.Count - 1], chain[chain.Count - 1].Position) < 0.01);
+            var a = chain[0].Position;
+            Assert.All(chain, v => Assert.True(Geometry.DistanceToSegment(v.Position, a, chain[chain.Count - 1].Position) < 1e-6));
+            Assert.True(StrokeBuilder.Build(m, shaped, Ctx()).Ok);
         }
 
         [Fact]
-        public void EveryInvalidReasonExceptTooShort_IsStraightened()
+        public void MessyStrokes_AreNeverThrownAway()
         {
             var spiral = Enumerable.Range(0, 601).Select(i =>
             {
@@ -38,75 +49,52 @@ namespace BridgeBuilder.Core.Tests
                 double t = i / 400.0, a = t * 3 * System.Math.PI;
                 return P(0.15 * System.Math.Cos(a), 1 + 0.15 * System.Math.Sin(a), 0.4 * t);
             }).ToList();
-            var bowTie = new List<Vec3>();
-            var corners = new[] { P(0, 0), P(0.4, 0.3), P(0.4, 0), P(0, 0.3) };
-            for (int c = 0; c + 1 < corners.Length; c++)
-                for (int i = 0; i < 80; i++)
-                    bowTie.Add(Vec3.Lerp(corners[c], corners[c + 1], i / 80.0));
-            bowTie.Add(corners[3]);
 
-            foreach (var stroke in new[] { spiral, helix, bowTie })
-            {
-                Assert.False(ShapeResolver.Resolve(stroke).Valid);
-                var s = ShapeResolver.ResolveOrStraighten(stroke);
-                Assert.True(s.Valid);
-                Assert.True(s.Straightened);
-            }
+            foreach (var stroke in new[] { spiral, helix, ShapeResolverTests.Scribble(3, P(0.2, 1.1, 0)) })
+                Assert.False(StrokeBuilder.Shape(stroke, Rooms.Model(), Ctx()).IsEmpty);
         }
 
         [Fact]
-        public void RecognisedShape_IsUnchanged()
+        public void RecognisedShape_IsNotStraightened()
         {
-            var line = Enumerable.Range(0, 101).Select(i => Vec3.Lerp(P(0, 1), P(0.5, 1.1), i / 100.0)).ToList();
-            var resolved = ShapeResolver.Resolve(line);
-            var forgiving = ShapeResolver.ResolveOrStraighten(line);
+            var m = Rooms.Model();
+            var stroke = StrokeBuilderTests.Stroke(P(0, 1), P(0.5, 1.1));
+            var shaped = StrokeBuilder.Shape(stroke, m, Ctx());
 
-            Assert.False(forgiving.Straightened);
-            Assert.Equal(resolved.Kind, forgiving.Kind);
-            Assert.Equal(resolved.Points, forgiving.Points);
+            Assert.False(shaped.Straightened);
+            Assert.Equal(FreeDraw.Build(stroke, Draw(m), out _).Single().Select(v => v.Position),
+                         shaped.Chains.Single().Select(v => v.Position));
         }
 
         [Fact]
-        public void TooShortStrokes_StayInvalid()
+        public void TooShortStrokes_AreStillRefused()
         {
-            Assert.Equal(InvalidReason.TooShort, ShapeResolver.ResolveOrStraighten(null).Reason);
-            Assert.Equal(InvalidReason.TooShort, ShapeResolver.ResolveOrStraighten(new List<Vec3>()).Reason);
-            Assert.Equal(InvalidReason.TooShort, ShapeResolver.ResolveOrStraighten(new[] { P(0, 1), P(0.01, 1) }).Reason);
+            var m = Rooms.Model();
+            Assert.True(StrokeBuilder.Shape(new List<Vec3>(), m, Ctx()).IsEmpty);
+            Assert.True(StrokeBuilder.Shape(new[] { P(0, 1) }, m, Ctx()).IsEmpty);
+            Assert.True(StrokeBuilder.Shape(StrokeBuilderTests.Stroke(P(0, 1), P(0.01, 1)), m, Ctx()).IsEmpty);
         }
 
         [Fact]
-        public void ScribbleThatEndsWhereItStarted_IsTooShort()
+        public void ScribbleThatEndsWhereItStarted_IsRefused()
         {
-            var loop = ShapeResolverTests.Scribble(11, P(0.3, 1, 0));
-            loop.Add(loop[0] + P(0.005, 0));                   // closes back on itself: no beam to build
-            var s = ShapeResolver.ResolveOrStraighten(loop);
-
-            Assert.Equal(ResolvedKind.Invalid, s.Kind);
-            Assert.Equal(InvalidReason.TooShort, s.Reason);
+            var loop = ShapeResolverTests.Scribble(11, P(0.3, 1.2, 0));
+            loop.Add(loop[0] + P(0.005, 0));                   // closes on itself: no beam between the ends
+            Assert.True(StrokeBuilder.Shape(loop, Rooms.Model(), Ctx()).IsEmpty);
         }
 
         [Fact]
-        public void StraightenedScribble_BuildsAndSnapsToAnExistingJoint()
+        public void StraightenedScribble_JoinsAnExistingJoint()
         {
-            var pads = Rooms.Pads();
-            var model = Rooms.Model();
-            int joint = model.AddFixedNode(P(0.3, 1, 0));
-            var stroke = ShapeResolverTests.Scribble(7, P(0.31, 1, 0));   // starts 1 cm from the joint
+            var m = Rooms.Model();
+            int joint = m.AddFixedNode(P(0.3, 1.2, 0));
+            var stroke = ShapeResolverTests.Scribble(7, P(0.31, 1.2, 0));   // starts 1 cm from the joint
 
-            var shape = ShapeResolver.ResolveOrStraighten(stroke);
-            var ctx = new FreeDraw.Context
-            {
-                Nodes = model.Nodes,
-                Joined = (a, b) => model.Members.Any(m => (m.NodeA == a && m.NodeB == b) || (m.NodeA == b && m.NodeB == a)),
-                Pads = pads,
-            };
-            var chains = FreeDraw.Build(shape.Path(), ctx, out _);
+            var shaped = StrokeBuilder.Shape(stroke, m, Ctx());
 
-            var chain = Assert.Single(chains);
-            Assert.True(chain[0].IsExisting);
-            Assert.Equal(joint, chain[0].ExistingId);
-            var vertices = chain.Select(v => v.IsExisting ? LineVertex.Existing(v.ExistingId) : LineVertex.New(v.Position)).ToList();
-            Assert.True(model.TryAddFreeLine(vertices).Ok);
+            Assert.True(shaped.Straightened);
+            Assert.Equal(joint, shaped.Chains[0][0].ExistingId);
+            Assert.True(StrokeBuilder.Build(m, shaped, Ctx()).Ok);
         }
     }
 }

@@ -6,10 +6,10 @@ using UnityEngine;
 namespace BridgeBuilder.Game
 {
     /// <summary>
-    /// What a stroke turns into (W4-04). While the trigger is held, a ghost shows the shape the stroke resolves to
-    /// (W4-01), already snapped parallel to its partner rail if it has one (W4-02). On release the resolved shape
-    /// is built, not the raw stroke; a stroke that fits no shape becomes a straight beam between its ends, and
-    /// only one too short to be a beam flashes red and fades. No HUD text here.
+    /// What a stroke turns into (W4-04, spec 11.1, 11.6), as StrokeBuilder.Shape reads it: FreeDraw's shape (a squiggle
+    /// straightened), or the exact shifted copy of a matching line it was drawn beside (W4-02). While the trigger is
+    /// held, a ghost shows what will be built, its mirror copy across the road, and the line it copies highlighted. A
+    /// rejected stroke flashes red and fades.
     /// </summary>
     public sealed class StrokeFeedback
     {
@@ -20,59 +20,37 @@ namespace BridgeBuilder.Game
         float _rejectedAt = float.NegativeInfinity;
         float _ghostAt = float.NegativeInfinity;
         int _ghostSamples;
-        List<Vec3> _ghostPath;
-        List<Vec3> _ghostMirror;      // where the mirror copy will go, or null
+        readonly List<List<Vec3>> _ghost = new List<List<Vec3>>();
+        readonly List<List<Vec3>> _mirrorGhost = new List<List<Vec3>>();
 
-        /// <summary>The line the ghost is snapped to, or -1 (drawn highlighted so you see the pairing).</summary>
+        /// <summary>The line the ghost copies, or -1 (drawn highlighted so you see the pairing).</summary>
         public int PartnerLine { get; private set; } = -1;
 
         public void Clear()
         {
-            _ghostPath = null;
-            _ghostMirror = null;
+            _ghost.Clear();
+            _mirrorGhost.Clear();
             PartnerLine = -1;
             _ghostSamples = 0;
         }
 
-        /// <summary>Resolves the stroke so far for the ghost (and its mirror copy), a few times a second.</summary>
-        public void UpdateGhost(List<Vector3> stroke, BridgeModel model, MirrorPlane? mirror, float now)
+        /// <summary>Works out what the stroke so far would build, a few times a second.</summary>
+        public void UpdateGhost(List<Vector3> stroke, BridgeModel model, StrokeBuilder.Context ctx, float now)
         {
             if (now - _ghostAt < GhostRefreshSeconds || stroke.Count == _ghostSamples)
                 return;
             _ghostAt = now;
             _ghostSamples = stroke.Count;
-            var shape = Resolve(stroke, model, out int partner);
-            _ghostPath = shape != null ? shape.Path(0.01) : null;
-            _ghostMirror = _ghostPath != null && mirror.HasValue ? MirrorAssist.Mirror(_ghostPath, mirror.Value) : null;
-            PartnerLine = partner;
+            var shaped = StrokeBuilder.Shape(stroke.Select(v => v.ToCore()).ToList(), model, ctx);
+            PartnerLine = shaped.Copy != null ? shaped.Copy.PartnerLineId : -1;
+            _ghost.Clear();
+            _ghost.AddRange(shaped.Paths());
+            _mirrorGhost.Clear();
+            if (ctx.Mirror.HasValue)
+                _mirrorGhost.AddRange(_ghost.Select(p => MirrorAssist.Mirror(p, ctx.Mirror.Value)).Where(p => p != null));
         }
 
-        /// <summary>
-        /// The finished stroke as straight or curved pieces ready for FreeDraw: one piece for a line or an arc,
-        /// one per side of a polyline so every corner lands exactly. Null only if the stroke is too short for a beam.
-        /// </summary>
-        public static List<List<Vec3>> Pieces(List<Vector3> stroke, BridgeModel model)
-        {
-            var shape = Resolve(stroke, model, out _);
-            if (shape == null)
-                return null;
-            if (shape.Kind == ResolvedKind.Polyline)
-                return Enumerable.Range(0, shape.Points.Count - 1).Select(i => new List<Vec3> { shape.Points[i], shape.Points[i + 1] }).ToList();
-            return new List<List<Vec3>> { shape.Path(0.01) };
-        }
-
-        static ResolvedShape Resolve(List<Vector3> stroke, BridgeModel model, out int partner)
-        {
-            partner = -1;
-            var shape = ShapeResolver.ResolveOrStraighten(stroke.Select(v => v.ToCore()).ToList());
-            if (!shape.Valid)
-                return null;
-            var snapped = ParallelAssist.Snap(shape, model);
-            partner = snapped.PartnerLineId;
-            return snapped.Shape;
-        }
-
-        /// <summary>Shows a stroke that fits no shape in red, fading out.</summary>
+        /// <summary>Shows a rejected stroke in red, fading out.</summary>
         public void Reject(List<Vector3> stroke, float now)
         {
             _rejected.Clear();
@@ -81,20 +59,22 @@ namespace BridgeBuilder.Game
             Clear();
         }
 
-        static void DrawPath(BridgeView view, List<Vec3> path, float radius, Color color)
+        static void DrawPaths(BridgeView view, List<List<Vec3>> paths, float radius, Color color)
         {
-            for (int i = 1; i < path.Count; i++)
-                view.Tube(path[i - 1].ToUnity(), path[i].ToUnity(), radius, color);
+            foreach (var path in paths)
+            {
+                for (int i = 1; i < path.Count; i++)
+                    view.Tube(path[i - 1].ToUnity(), path[i].ToUnity(), radius, color);
+            }
         }
 
         public void Draw(BridgeView view, float radius, Color ghostColor, Color rejectColor, bool drawing, float now)
         {
-            if (drawing && _ghostPath != null)
+            if (drawing)
             {
                 Color c = PartnerLine >= 0 ? ghostColor : Color.Lerp(ghostColor, Color.white, 0.5f);
-                DrawPath(view, _ghostPath, radius * 0.6f, c);
-                if (_ghostMirror != null)
-                    DrawPath(view, _ghostMirror, radius * 0.5f, Color.Lerp(c, Color.white, 0.5f));
+                DrawPaths(view, _ghost, radius * 0.6f, c);
+                DrawPaths(view, _mirrorGhost, radius * 0.5f, Color.Lerp(c, Color.white, 0.5f));
             }
 
             float age = now - _rejectedAt;

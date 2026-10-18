@@ -194,7 +194,7 @@ namespace BridgeBuilder.Core.Tests
         }
 
         [Fact]
-        public void PolylinesAndInvalidShapes_PassThrough()
+        public void PolylineBesideAStraightLine_AndInvalidShapes_PassThrough()
         {
             var m = Model();
             AddStraight(m, new Vec3(0, Top, 0), new Vec3(1, Top, 0));
@@ -202,6 +202,124 @@ namespace BridgeBuilder.Core.Tests
             Assert.False(ParallelAssist.Snap(poly, m).Snapped);
             Assert.False(ParallelAssist.Snap(ResolvedShape.Invalid(InvalidReason.TooNoisy), m).Snapped);
             Assert.False(ParallelAssist.Snap(null, m).Snapped);
+        }
+
+        /// <summary>A hand stroke through the corners: ~5 mm between samples, seeded jitter.</summary>
+        static List<Vec3> Through(int seed, params Vec3[] corners)
+        {
+            var pts = new List<Vec3>();
+            for (int c = 0; c + 1 < corners.Length; c++)
+            {
+                int n = Math.Max(2, (int)(Vec3.Distance(corners[c], corners[c + 1]) / 0.005));
+                for (int i = c == 0 ? 0 : 1; i <= n; i++)
+                    pts.Add(Vec3.Lerp(corners[c], corners[c + 1], i / (double)n));
+            }
+            return Noisy(seed, pts);
+        }
+
+        /// <summary>A truss chord zigzag in the vertical plane at z, nudged by (dx, dy).</summary>
+        static Vec3[] Zigzag(double z, double dx = 0, double dy = 0) => new[]
+        {
+            new Vec3(0.2 + dx, 1.1 + dy, z), new Vec3(0.3 - dx, 0.95, z), new Vec3(0.4 + dx, 1.1 - dy, z),
+            new Vec3(0.5 - dx, 0.95 + dy, z), new Vec3(0.6 + dx, 1.1, z),
+        };
+
+        /// <summary>FreeDraw's single chain for a raw stroke, resolved the way the game resolves it for the assist.</summary>
+        static ResolvedShape DrawnShape(BridgeModel m, Pad[] pads, List<Vec3> raw)
+        {
+            var chain = Assert.Single(FreeDraw.Build(raw, Rooms.Context(m, pads), out var kind));
+            Assert.Equal(StrokeKind.Polyline, kind);
+            return ShapeResolver.Resolve(chain.Select(v => v.Position).ToList());
+        }
+
+        [Fact]
+        public void ZigzagBesideTheSameZigzag_SnapsToItsCornersShiftedSideways()
+        {
+            var pads = Rooms.Pads();
+            var m = Rooms.Model();
+            int rail = Assert.Single(Rooms.DrawStroke(m, pads, Through(21, Zigzag(-0.1))));
+            var drawn = DrawnShape(m, pads, Through(22, Zigzag(0.1, 0.012, 0.01)));
+            Assert.Equal(ResolvedKind.Polyline, drawn.Kind);
+
+            var result = ParallelAssist.Snap(drawn, m);
+            Assert.True(result.Snapped);
+            Assert.Equal(rail, result.PartnerLineId);
+            var partner = ShapeResolver.Resolve(m.LineNodes(rail).Select(id => m.GetNode(id).Position).ToList());
+            var s = result.Shape;
+            Assert.Equal(ResolvedKind.Polyline, s.Kind);
+            Assert.Equal(partner.Points.Count, s.Points.Count);
+            Vec3 offset = s.Points[0] - partner.Points[0];
+            for (int i = 0; i < s.Points.Count; i++)
+                Assert.True(Vec3.Distance(s.Points[i] - partner.Points[i], offset) < 1e-9);   // the same corners, one constant shift
+            Assert.True(Math.Abs(offset.X) < 0.005 && Math.Abs(offset.Y) < 0.005, $"offset {offset.X:F5} {offset.Y:F5} {offset.Z:F5}");   // straight across, same height
+            Assert.InRange(offset.Z, 0.18, 0.22);
+            Assert.All(s.Points, p => Assert.True(p.IsFinite));
+        }
+
+        [Fact]
+        public void ZigzagDrawnBackwards_KeepsItsDirection()
+        {
+            var pads = Rooms.Pads();
+            var m = Rooms.Model();
+            Rooms.DrawStroke(m, pads, Through(23, Zigzag(-0.1)));
+            var drawn = DrawnShape(m, pads, Through(24, Zigzag(0.1).Reverse().ToArray()));
+            var result = ParallelAssist.Snap(drawn, m);
+            Assert.True(result.Snapped);
+            Assert.InRange(result.Shape.Points[0].X, 0.59, 0.61);
+            Assert.InRange(result.Shape.Points[result.Shape.Points.Count - 1].X, 0.19, 0.21);
+        }
+
+        [Theory]
+        [InlineData(0.05)]     // closer than a car fits
+        [InlineData(0.45)]     // farther than a deck spans
+        public void ZigzagOutsideTheDrivableRange_DoesNotSnap(double spacing)
+        {
+            var pads = Rooms.Pads();
+            var m = Rooms.Model();
+            Rooms.DrawStroke(m, pads, Through(25, Zigzag(0)));
+            Assert.False(ParallelAssist.Snap(DrawnShape(m, pads, Through(26, Zigzag(spacing))), m).Snapped);
+        }
+
+        [Fact]
+        public void ZigzagWithMoreCorners_DoesNotSnap()
+        {
+            var pads = Rooms.Pads();
+            var m = Rooms.Model();
+            Rooms.DrawStroke(m, pads, Through(27, Zigzag(-0.1)));
+            var more = new[]
+            {
+                new Vec3(0.2, 1.1, 0.1), new Vec3(0.27, 0.95, 0.1), new Vec3(0.33, 1.1, 0.1), new Vec3(0.4, 0.95, 0.1),
+                new Vec3(0.47, 1.1, 0.1), new Vec3(0.53, 0.95, 0.1), new Vec3(0.6, 1.1, 0.1),
+            };
+            var drawn = DrawnShape(m, pads, Through(28, more));
+            Assert.Equal(ResolvedKind.Polyline, drawn.Kind);
+            Assert.False(ParallelAssist.Snap(drawn, m).Snapped);
+        }
+
+        [Fact]
+        public void CopiedZigzag_BuiltSideBySide_MatchesTheOtherSideDotForDot()
+        {
+            // The game's flow (W4-04): FreeDraw shapes the stroke, the assist snaps it, and each side of the copy goes
+            // through FreeDraw on its own.
+            var pads = Rooms.Pads();
+            var m = Rooms.Model();
+            int rail = Assert.Single(Rooms.DrawStroke(m, pads, Through(29, Zigzag(-0.1))));
+            var result = ParallelAssist.Snap(DrawnShape(m, pads, Through(30, Zigzag(0.1, -0.01, 0.012))), m);
+            Assert.True(result.Snapped);
+
+            var before = m.Nodes.Select(n => n.Id).ToHashSet();
+            var corners = result.Shape.Points;
+            for (int i = 0; i + 1 < corners.Count; i++)
+            {
+                foreach (var chain in FreeDraw.Build(new[] { corners[i], corners[i + 1] }, Rooms.Context(m, pads), out _))
+                    Assert.True(m.TryAddFreeLine(chain.Select(v => v.IsExisting ? LineVertex.Existing(v.ExistingId) : LineVertex.New(v.Position)).ToList()).Ok);
+            }
+
+            var added = m.Nodes.Where(n => !before.Contains(n.Id)).Select(n => n.Position).ToList();
+            var expected = m.LineNodes(rail).Select(id => m.GetNode(id).Position + result.Offset).ToList();
+            Assert.Equal(expected.Count, added.Count);
+            Assert.All(expected, p => Assert.Contains(added, q => Vec3.Distance(p, q) < 1e-6));
+            Assert.All(added, p => Assert.True(p.IsFinite));
         }
     }
 }

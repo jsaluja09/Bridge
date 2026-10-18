@@ -14,6 +14,8 @@ namespace BridgeBuilder.Core
             /// the partner's snaps to the same radius (side-by-side arches). GUESS.
             /// </summary>
             public const double ParallelArcRadiusTolerance = 0.03;
+            /// <summary>Polylines: each corner and end of the new one must be this close to its shifted partner's. GUESS.</summary>
+            public const double ParallelCornerTolerance = 0.06;
         }
     }
 }

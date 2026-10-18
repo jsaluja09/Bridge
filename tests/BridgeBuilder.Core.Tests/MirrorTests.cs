@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using BridgeBuilder.Core;
@@ -88,7 +89,22 @@ namespace BridgeBuilder.Core.Tests
             Mirror = mirror ? MirrorPlane.Centerline(pads[0], pads[1]) : (MirrorPlane?)null,
         };
 
-        static IReadOnlyList<IReadOnlyList<Vec3>> Piece(params Vec3[] points) => new[] { points };
+        /// <summary>A steady hand stroke through the corners, 5 mm between samples.</summary>
+        internal static List<Vec3> Stroke(params Vec3[] corners)
+        {
+            var pts = new List<Vec3> { corners[0] };
+            for (int c = 0; c + 1 < corners.Length; c++)
+            {
+                int n = Math.Max(1, (int)(Vec3.Distance(corners[c], corners[c + 1]) / 0.005));
+                for (int i = 1; i <= n; i++)
+                    pts.Add(Vec3.Lerp(corners[c], corners[c + 1], i / (double)n));
+            }
+            return pts;
+        }
+
+        /// <summary>Shapes and builds a stroke the way the game does when the trigger is released.</summary>
+        static StrokeResult Draw(BridgeModel m, StrokeBuilder.Context ctx, params Vec3[] corners) =>
+            StrokeBuilder.Build(m, StrokeBuilder.Shape(Stroke(corners), m, ctx), ctx);
 
         static List<Vec3> LineEnds(BridgeModel m, Line line)
         {
@@ -102,7 +118,7 @@ namespace BridgeBuilder.Core.Tests
             var pads = Rooms.Pads();
             var m = Rooms.Model();
 
-            var result = StrokeBuilder.Build(m, Piece(P(0, Top, 0.1), P(1, Top, 0.1)), Ctx(pads, true));
+            var result = Draw(m, Ctx(pads, true), P(0, Top, 0.1), P(1, Top, 0.1));
 
             Assert.True(result.Ok);
             Assert.Equal(2, result.Lines);
@@ -117,7 +133,7 @@ namespace BridgeBuilder.Core.Tests
         {
             var pads = Rooms.Pads();
             var m = Rooms.Model();
-            Assert.Equal(1, StrokeBuilder.Build(m, Piece(P(0, Top, 0.1), P(1, Top, 0.1)), Ctx(pads, false)).Lines);
+            Assert.Equal(1, Draw(m, Ctx(pads, false), P(0, Top, 0.1), P(1, Top, 0.1)).Lines);
             Assert.Single(m.Lines);
         }
 
@@ -126,7 +142,7 @@ namespace BridgeBuilder.Core.Tests
         {
             var pads = Rooms.Pads();
             var m = Rooms.Model();
-            StrokeBuilder.Build(m, Piece(P(0, Top, 0.1), P(1, Top, 0.1)), Ctx(pads, true));
+            Draw(m, Ctx(pads, true), P(0, Top, 0.1), P(1, Top, 0.1));
 
             var bridge = BridgeCompiler.Compile(m, pads, Constants.Scale.RoomToBridge);
 
@@ -139,9 +155,8 @@ namespace BridgeBuilder.Core.Tests
         {
             var pads = Rooms.Pads();
             var m = Rooms.Model();
-            StrokeBuilder.Build(m, Piece(P(0, Top, 0.1), P(1, Top, 0.1)), Ctx(pads, true));
-            int depth = m.UndoDepth;
-            Assert.Equal(1, depth);
+            Draw(m, Ctx(pads, true), P(0, Top, 0.1), P(1, Top, 0.1));
+            Assert.Equal(1, m.UndoDepth);
 
             Assert.True(m.Undo());
 
@@ -151,19 +166,14 @@ namespace BridgeBuilder.Core.Tests
         }
 
         [Fact]
-        public void PolylinePieces_AreOneUndoStep()
+        public void Polyline_IsOneUndoStep()
         {
             var pads = Rooms.Pads();
             var m = Rooms.Model();
-            var pieces = new[]
-            {
-                new[] { P(0, Top, 0.1), P(0.5, Top + 0.2, 0.1) },
-                new[] { P(0.5, Top + 0.2, 0.1), P(1, Top, 0.1) },
-            };
 
-            var result = StrokeBuilder.Build(m, pieces, Ctx(pads, false));
+            var result = Draw(m, Ctx(pads, false), P(0, Top, 0.1), P(0.5, Top + 0.2, 0.1), P(1, Top, 0.1));
 
-            Assert.Equal(2, result.Lines);
+            Assert.True(result.Ok);
             Assert.Equal(1, m.UndoDepth);
             m.Undo();
             Assert.Empty(m.Lines);
@@ -176,7 +186,7 @@ namespace BridgeBuilder.Core.Tests
             var policy = new BudgetPolicy { CostPerMeter = 1, CostPerSquareMeter = 1, MaterialBudget = 1.5, NodeCap = 1000 };
             var m = new BridgeModel(policy);
 
-            var result = StrokeBuilder.Build(m, Piece(P(0, Top, 0.1), P(1, Top, 0.1)), Ctx(pads, true));
+            var result = Draw(m, Ctx(pads, true), P(0, Top, 0.1), P(1, Top, 0.1));
 
             Assert.False(result.Ok);
             Assert.Equal(EditReason.BudgetExceeded, result.Reason);
@@ -190,14 +200,30 @@ namespace BridgeBuilder.Core.Tests
         {
             var pads = Rooms.Pads();
             var m = Rooms.Model();
-            StrokeBuilder.Build(m, Piece(P(0.2, Top + 0.3, -0.1), P(0.8, Top + 0.3, -0.1)), Ctx(pads, false));
+            Draw(m, Ctx(pads, false), P(0.2, Top + 0.3, -0.1), P(0.8, Top + 0.3, -0.1));
             int joint = m.LineNodes(m.Lines[0].Id)[0];          // at (0.2, top + 0.3, -0.1)
 
             // Its mirror image lands 1 cm from that joint, within the snap radius.
-            StrokeBuilder.Build(m, Piece(P(0.21, Top + 0.3, 0.1), P(0.6, Top + 0.5, 0.1)), Ctx(pads, true));
+            Draw(m, Ctx(pads, true), P(0.21, Top + 0.3, 0.1), P(0.6, Top + 0.5, 0.1));
 
             var copy = m.Lines.Last();
             Assert.Equal(joint, m.LineNodes(copy.Id)[0]);
+        }
+
+        [Fact]
+        public void MirrorCopy_JoinsABeamItCrosses()
+        {
+            var pads = Rooms.Pads();
+            var m = Rooms.Model();
+            Draw(m, Ctx(pads, false), P(0.5, Top + 0.1, -0.2), P(0.5, Top + 0.1, -0.05));   // a cross piece on the far side
+            int members = m.Members.Count;
+
+            // A diagonal on the near side whose mirror runs straight through that piece's middle.
+            Draw(m, Ctx(pads, true), P(0.45, Top, 0.15), P(0.55, Top + 0.2, 0.15));
+
+            var copy = m.Lines.Last();
+            Assert.True(m.Members.Count > members);
+            Assert.Contains(m.LineNodes(copy.Id), id => Math.Abs(m.GetNode(id).Position.Z + 0.15) < 1e-6);
         }
 
         [Fact]
@@ -205,13 +231,21 @@ namespace BridgeBuilder.Core.Tests
         {
             var pads = Rooms.Pads();
             var m = Rooms.Model();
-            StrokeBuilder.Build(m, Piece(P(0, Top, 0.1), P(1, Top, 0.1)), Ctx(pads, false));
+            Draw(m, Ctx(pads, false), P(0, Top, 0.1), P(1, Top, 0.1));
 
-            var again = StrokeBuilder.Build(m, Piece(P(0, Top, 0.1), P(1, Top, 0.1)), Ctx(pads, false));
+            var again = Draw(m, Ctx(pads, false), P(0, Top, 0.1), P(1, Top, 0.1));
 
             Assert.False(again.Ok);
-            Assert.Equal(EditReason.None, again.Reason);
             Assert.Single(m.Lines);
+        }
+
+        [Fact]
+        public void EmptyShape_IsRefused()
+        {
+            var m = Rooms.Model();
+            var result = StrokeBuilder.Build(m, new ShapedStroke(), new StrokeBuilder.Context());
+            Assert.False(result.Ok);
+            Assert.Equal(0, m.UndoDepth);
         }
     }
 
