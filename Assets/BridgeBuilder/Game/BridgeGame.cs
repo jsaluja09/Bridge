@@ -160,13 +160,7 @@ namespace BridgeBuilder.Game
                 _groundDots = GroundPlane.Grid(ea[0], ea[1], eb[0], eb[1], _floor).Select(n => n.Position).ToList();
             }
 
-            _model = new BridgeModel(new BudgetPolicy
-            {
-                CostPerMeter = Constants.Budget.CostPerMeter,
-                CostPerSquareMeter = Constants.Budget.CostPerSquareMeter,
-                MaterialBudget = _level.Budget,
-                NodeCap = Constants.Human.NodeCap + Constants.Draw.SupportNodeAllowance,
-            });
+            _model = new BridgeModel(BudgetPolicy.ForMaterials(_level.Budget, Constants.Human.NodeCap + Constants.Draw.SupportNodeAllowance));
             _start = new StartSurfaceChoice(0, 1);
             _bridge = null;
             _preview = null;
@@ -195,6 +189,9 @@ namespace BridgeBuilder.Game
         }
 
         bool PreviewCurrent => _preview != null && _previewBridge == _bridge;
+
+        /// <summary>What the bridge costs: its lines plus the decks they make.</summary>
+        double TotalSpent(CompiledBridge bridge) => _model.Spent + bridge.DeckCost(_model.Policy);
 
         void StartTest()
         {

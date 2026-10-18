@@ -4,19 +4,25 @@ using UnityEngine;
 namespace BridgeBuilder.Game
 {
     /// <summary>
-    /// Drawing (spec 2.10): members colored by how close they are to failing (the worst of tension, compression,
-    /// buckling and bending), joints by their worst member, decks by their frame, and where things broke.
+    /// Drawing (spec 2.10): members and decks in their material, tinted by how close they are to failing (the
+    /// worst of tension, compression, buckling and bending), joints by their worst member, and where things broke.
     /// </summary>
     public sealed partial class BridgeGame
     {
         [Header("Look")]
+        [Tooltip("Plain tubes: pad edges, the stroke trail, star outlines. Member sizes are on BridgeView.")]
         [SerializeField] float memberRadius = 0.005f;
         [SerializeField] float jointRadius = 0.007f;
         [SerializeField] float dotRadius = 0.0035f;
+        [Tooltip("Snap dots, and joints before there are loads to show.")]
         [SerializeField] Color memberColor = new Color(0.85f, 0.88f, 0.95f);
         [SerializeField] Color padColor = new Color(0.95f, 0.6f, 0.2f);
         [SerializeField] Color groundColor = new Color(0.7f, 0.45f, 0.15f);
-        [SerializeField] Color roadColor = new Color(0.25f, 0.25f, 0.28f);
+        [Tooltip("How much the load color covers a member's material at no load; loadTintRise is added at full load.")]
+        [Range(0f, 1f)] [SerializeField] float loadTint = 0.35f;
+        [Range(0f, 1f)] [SerializeField] float loadTintRise = 0.45f;
+        [Tooltip("How much a highlight (delete, blocked, partner rail, unsupported, falling, ghost) covers the material.")]
+        [Range(0f, 1f)] [SerializeField] float highlightTint = 0.75f;
         [SerializeField] Color highlightColor = new Color(0.3f, 0.9f, 1f);
         [SerializeField] Color warningColor = new Color(1f, 0.2f, 0.25f);
         [SerializeField] Color floatingColor = new Color(0.85f, 0.2f, 0.85f);
@@ -82,17 +88,21 @@ namespace BridgeBuilder.Game
         {
             var input = _bridge.Input;
             bool preview = PreviewCurrent;
-            bool warn = Time.time < _roadWarningUntil;
+            bool warn = Time.time < _roadWarningUntil && !_bridge.Road.Ok;
 
             for (int d = 0; d < _bridge.Decks.Count; d++)
             {
                 var deck = _bridge.Decks[d];
-                Color c = roadColor;
+                Color c = Color.white;
+                float tint = 0f;
                 if (preview)
-                    c = Color.Lerp(c, BridgeView.UtilizationColor((float)WorstEdge(deck, _preview.Utilizations, null)), 0.35f);
-                if (warn && !_bridge.Road.Ok)
-                    c = Color.Lerp(c, warningColor, Pulse(6f));
-                DrawDeck(deck, i => V(input.Nodes[i].Position), c, null);
+                {
+                    c = BridgeView.UtilizationColor((float)WorstEdge(deck, _preview.Utilizations, null));
+                    tint = loadTint;
+                }
+                if (warn)
+                    Blend(ref c, ref tint, warningColor, highlightTint, Pulse(6f));
+                DrawDeck(deck, i => V(input.Nodes[i].Position), c, tint, null);
             }
 
             bool blocked = Time.time < _blockedUntil;
@@ -101,21 +111,23 @@ namespace BridgeBuilder.Game
                 var m = input.Members[k];
                 if (m.HiddenBrace)
                     continue;
-                Color c = memberColor;
-                float stripe = 0f;
+                Color c = Color.white;
+                float tint = 0f, stripe = 0f;
                 if (preview)
                 {
                     bool floating = _preview.Solve.MemberForces[k] == null;
-                    c = floating ? floatingColor : BridgeView.UtilizationColor((float)_preview.Utilizations[k]);
-                    stripe = floating ? 0f : (float)_preview.Utilizations[k];
+                    float u = (float)_preview.Utilizations[k];
+                    c = floating ? floatingColor : BridgeView.UtilizationColor(u);
+                    tint = floating ? highlightTint : LoadTint(u);
+                    stripe = floating ? 0f : u;
                 }
                 if (m.LineId == _hoverLine)
-                    c = warningColor;
+                    (c, tint) = (warningColor, highlightTint);
                 else if (_drawing && m.LineId == _strokeFx.PartnerLine)
-                    c = ghostColor;               // W4-04: the rail the new line is snapping parallel to
+                    (c, tint) = (ghostColor, highlightTint);      // W4-04: the rail the new line is snapping parallel to
                 else if (blocked && _blockedMembers.Contains(m.Id))
-                    c = Color.Lerp(c, warningColor, Pulse(8f));
-                _view.Tube(V(Node(input, m.NodeA)), V(Node(input, m.NodeB)), memberRadius, c, stripe);
+                    Blend(ref c, ref tint, warningColor, highlightTint, Pulse(8f));
+                _view.Beam(V(Node(input, m.NodeA)), V(Node(input, m.NodeB)), Materials.Of(m.SectionId), c, tint, stripe);
             }
 
             // Supports show as orange dots; every other snap point as a small light dot (spec 2.3).
@@ -137,7 +149,7 @@ namespace BridgeBuilder.Game
                     _view.Tube(_stroke[i - 2], _stroke[i], memberRadius * 0.4f, highlightColor);
                 _view.Tube(_stroke[_stroke.Count - 1], tip, memberRadius * 0.4f, highlightColor);
             }
-            _strokeFx.Draw(_view, memberRadius, ghostColor, warningColor, _drawing, Time.time);   // W4-04
+            _strokeFx.Draw(_view, _material, memberRadius, ghostColor, highlightTint, warningColor, _drawing, Time.time);   // W4-04
         }
 
         CarPose _parked;
@@ -170,8 +182,8 @@ namespace BridgeBuilder.Game
             for (int d = 0; d < snap.Bridge.Decks.Count; d++)
             {
                 var deck = snap.Bridge.Decks[d];
-                Color c = Color.Lerp(roadColor, BridgeView.UtilizationColor((float)WorstEdge(deck, snap.Utilization, snap.State)), 0.35f);
-                DrawDeck(deck, i => V(pos[i]), c, snap.State, input, _fx.NodeFade);
+                Color c = BridgeView.UtilizationColor((float)WorstEdge(deck, snap.Utilization, snap.State));
+                DrawDeck(deck, i => V(pos[i]), c, loadTint, snap.State, input, _fx.NodeFade);
             }
 
             var buckling = _worker.LatestBuckling;
@@ -184,18 +196,19 @@ namespace BridgeBuilder.Game
                 int ia = snap.Bridge.NodeIndex[m.NodeA], ib = snap.Bridge.NodeIndex[m.NodeB];
                 Vector3 a = V(pos[ia]), b = V(pos[ib]);
                 float u = (float)snap.Utilization[k];
+                var material = Materials.Of(m.SectionId);
                 if (state == MemberState.Falling)
                 {
                     float fade = Mathf.Min(_fx.NodeFade(ia), _fx.NodeFade(ib));
                     if (fade > 0f)
-                        _view.Tube(a, b, memberRadius * fade, fallingColor);
+                        _view.Beam(a, b, material, fallingColor, highlightTint, 0f, fade);
                 }
                 else
                 {
-                    _fx.Member(_view, a, b, memberRadius, BridgeView.UtilizationColor(u), u, k < buckling.Length ? (float)buckling[k] : 0f);
+                    _fx.Member(_view, a, b, material, BridgeView.UtilizationColor(u), LoadTint(u), u, k < buckling.Length ? (float)buckling[k] : 0f);
                 }
             }
-            _fx.DrawPieces(_view, memberRadius);
+            _fx.DrawPieces(_view);
             DrawJoints(input, i => V(pos[i]), snap.Utilization, _fx.NodeFade);
             if (_phaseEndedAt >= 0f || _phase == Phase.Results)
                 DrawWeakMember(snap);
@@ -214,7 +227,8 @@ namespace BridgeBuilder.Game
             var m = snap.Bridge.Input.Members[k];
             Vector3 a = V(snap.Positions[snap.Bridge.NodeIndex[m.NodeA]]), b = V(snap.Positions[snap.Bridge.NodeIndex[m.NodeB]]);
             Color c = snap.State[k] == MemberState.Broken ? warningColor : new Color(1f, 0.85f, 0.1f);
-            _view.Tube(a, b, memberRadius * (2f + Pulse(6f)), c);
+            float sleeve = Mathf.Max(memberRadius, _view.HalfWidth(Materials.Of(m.SectionId)));
+            _view.Tube(a, b, sleeve * (2f + Pulse(6f)), c);
         }
 
         // ---------- Snow ----------
@@ -277,10 +291,14 @@ namespace BridgeBuilder.Game
 
         Vec3 Node(SolverInput input, int id) => input.Nodes[_bridge.NodeIndex[id]].Position;
 
-        /// <summary>Torn triangles are skipped (they fall as pieces); fade shrinks fallen ones toward their middle.</summary>
-        void DrawDeck(DeckGeometry deck, System.Func<int, Vector3> position, Color color, MemberState[] state = null,
+        /// <summary>
+        /// The deck in its material, tint of color over it. Torn triangles are skipped (they fall as pieces); fade
+        /// shrinks fallen ones toward their middle.
+        /// </summary>
+        void DrawDeck(DeckGeometry deck, System.Func<int, Vector3> position, Color color, float tint, MemberState[] state = null,
                       SolverInput input = null, System.Func<int, float> fade = null)
         {
+            var material = Materials.Of(deck.SectionId);
             for (int t = 0; t < deck.Triangles.Length; t += 3)
             {
                 if (state != null && TriangleBroken(deck, t, state, input))
@@ -297,7 +315,7 @@ namespace BridgeBuilder.Game
                     p1 = Vector3.Lerp(mid, p1, f);
                     p2 = Vector3.Lerp(mid, p2, f);
                 }
-                _view.Triangle(p0, p1, p2, color);
+                _view.MaterialTriangle(p0, p1, p2, material, color, tint);
             }
         }
 
@@ -351,6 +369,17 @@ namespace BridgeBuilder.Game
                     worst = System.Math.Max(worst, utilization[k]);
             }
             return worst;
+        }
+
+        float LoadTint(float utilization) => loadTint + loadTintRise * Mathf.Clamp01(utilization);
+
+        /// <summary>Moves a tinted look toward another by amount, mixing the two the way the shader would.</summary>
+        static void Blend(ref Color color, ref float tint, Color toward, float towardTint, float amount)
+        {
+            float mixed = Mathf.Lerp(tint, towardTint, amount);
+            if (mixed > 0f)
+                color = (color * (tint * (1f - amount)) + toward * (towardTint * amount)) / mixed;
+            tint = mixed;
         }
 
         static float Pulse(float speed) => 0.5f + 0.5f * Mathf.Sin(Time.time * speed);

@@ -81,20 +81,26 @@ namespace BridgeBuilder.Game
             Clear();
         }
 
-        static void DrawPath(BridgeView view, List<Vec3> path, float radius, Color color)
+        static void DrawPath(BridgeView view, List<Vec3> path, BridgeMaterial material, float scale, Color color, float tint)
         {
+            float along = 0f;
             for (int i = 1; i < path.Count; i++)
-                view.Tube(path[i - 1].ToUnity(), path[i].ToUnity(), radius, color);
+            {
+                Vector3 a = path[i - 1].ToUnity(), b = path[i].ToUnity();
+                view.Beam(a, b, material, color, tint, 0f, scale, along);
+                along += Vector3.Distance(a, b);
+            }
         }
 
-        public void Draw(BridgeView view, float radius, Color ghostColor, Color rejectColor, bool drawing, float now)
+        /// <summary>The ghost in the material it will be built from, ghostTint of ghostColor over it; the reject trail is plain.</summary>
+        public void Draw(BridgeView view, BridgeMaterial material, float radius, Color ghostColor, float ghostTint, Color rejectColor, bool drawing, float now)
         {
             if (drawing && _ghostPath != null)
             {
                 Color c = PartnerLine >= 0 ? ghostColor : Color.Lerp(ghostColor, Color.white, 0.5f);
-                DrawPath(view, _ghostPath, radius * 0.6f, c);
+                DrawPath(view, _ghostPath, material, 0.6f, c, ghostTint);
                 if (_ghostMirror != null)
-                    DrawPath(view, _ghostMirror, radius * 0.5f, Color.Lerp(c, Color.white, 0.5f));
+                    DrawPath(view, _ghostMirror, material, 0.5f, Color.Lerp(c, Color.white, 0.5f), ghostTint);
             }
 
             float age = now - _rejectedAt;

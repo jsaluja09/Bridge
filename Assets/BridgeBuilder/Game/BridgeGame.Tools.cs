@@ -6,10 +6,14 @@ namespace BridgeBuilder.Game
 {
     /// <summary>
     /// Building input (spec 11.1, 11.4): hold the trigger to draw a line anywhere, release to place it;
-    /// squeeze grip on a line to delete it; B undoes, X clears, Y turns mirroring across the road on and off.
+    /// flick the stick to change material; squeeze grip on a line to delete it; B undoes, X clears, Y turns
+    /// mirroring across the road on and off.
     /// </summary>
     public sealed partial class BridgeGame
     {
+        const string OutOfMaterial = "Out of material. Delete or undo something first.";
+
+        BridgeMaterial _material = BridgeMaterial.Wood;     // what new lines are made of
         bool _drawing;
         readonly List<Vector3> _stroke = new List<Vector3>();
         readonly StrokeFeedback _strokeFx = new StrokeFeedback();
@@ -61,6 +65,14 @@ namespace BridgeBuilder.Game
 
             _hover = _drawing ? null : HoverPoint(tip);
             _hoverLine = _drawing ? -1 : PickLine(tip.ToCore());
+
+            if (_pointer.StickStep != 0 && !_drawing)
+            {
+                int count = Materials.All.Length;
+                int next = System.Array.IndexOf(Materials.All, _material) + _pointer.StickStep;
+                _material = Materials.All[(next % count + count) % count];
+                Play(snapClip);
+            }
 
             if (_pointer.GripPressed && !_drawing)
                 DeleteHovered();
@@ -130,7 +142,8 @@ namespace BridgeBuilder.Game
         /// <summary>
         /// Builds the resolved shape (W4-04), not the raw stroke: one piece for a line or arc, one per side of a
         /// polyline so its corners land exactly. A stroke that fits no shape is built as a straight beam; one too
-        /// short for a beam flashes red with no message.
+        /// short for a beam flashes red with no message. The whole stroke comes back out if the lines plus the
+        /// decks they make cost more than the budget.
         /// </summary>
         void FinishStroke()
         {
@@ -141,17 +154,99 @@ namespace BridgeBuilder.Game
                 return;
             }
 
-            var ctx = new StrokeBuilder.Context { Pads = _pads, GroundDots = _groundDots, Mirror = MirrorPlaneNow };
-            var result = StrokeBuilder.Build(_model, pieces, ctx);
+            var result = AddStroke(pieces);
+            if (result.Ok)
+            {
+                var compiled = BridgeCompiler.Compile(_model, _pads, Scale);
+                if (TotalSpent(compiled) > _model.Policy.MaterialBudget + 1e-9)
+                {
+                    _model.Undo();
+                    _scheduler.NotifyPaused();
+                    result = new StrokeResult(0, EditReason.BudgetExceeded);
+                }
+                else
+                {
+                    _bridge = compiled;
+                }
+            }
             if (!result.Ok)
             {
-                Reject(result.Reason == EditReason.BudgetExceeded ? "Out of material. Delete or undo something first." : null);
+                Reject(result.Reason == EditReason.BudgetExceeded ? OutOfMaterial : null);
                 return;
             }
             _stroke.Clear();
             _strokeFx.Clear();
             Play(snapClip);
             _scheduler.NotifyPaused();
+        }
+
+        /// <summary>
+        /// StrokeBuilder.Build in the chosen material: each piece, then its mirror copy, goes through FreeDraw, and
+        /// the whole stroke is one undo step that goes in whole or not at all.
+        /// </summary>
+        StrokeResult AddStroke(List<List<Vec3>> pieces)
+        {
+            var all = new List<IReadOnlyList<Vec3>>(pieces);
+            var mirror = MirrorPlaneNow;
+            if (mirror.HasValue)
+            {
+                foreach (var piece in pieces)
+                {
+                    var copy = MirrorAssist.Mirror(piece, mirror.Value);
+                    if (copy != null)
+                        all.Add(copy);
+                }
+            }
+
+            int added = 0;
+            _model.BeginGroup();
+            try
+            {
+                foreach (var piece in all)
+                {
+                    var draw = new FreeDraw.Context { Nodes = _model.Nodes, Joined = JoinedLookup(), Pads = _pads, GroundDots = _groundDots };
+                    foreach (var chain in FreeDraw.Build(piece, draw, out _))
+                    {
+                        var result = _model.TryAddFreeLine(LineVertices(chain), (int)_material);
+                        if (!result.Ok)
+                        {
+                            if (added > 0)
+                                _model.Undo();          // the group saved one snapshot before its first line
+                            return new StrokeResult(0, result.Reason);
+                        }
+                        added++;
+                    }
+                }
+            }
+            finally
+            {
+                _model.EndGroup();
+            }
+            return new StrokeResult(added, EditReason.None);
+        }
+
+        List<LineVertex> LineVertices(List<DrawVertex> chain)
+        {
+            var vertices = new List<LineVertex>(chain.Count);
+            foreach (var v in chain)
+            {
+                if (v.IsExisting)
+                    vertices.Add(LineVertex.Existing(v.ExistingId));
+                else if (v.NewSupport)
+                    vertices.Add(LineVertex.Existing(_model.AddFixedNode(v.Position, v.SurfaceId, v.Ground)));
+                else
+                    vertices.Add(LineVertex.New(v.Position));
+            }
+            return vertices;
+        }
+
+        /// <summary>"Are these two nodes already joined?" from one pass over the members (FreeDraw asks per segment).</summary>
+        System.Func<int, int, bool> JoinedLookup()
+        {
+            var joined = new HashSet<(int, int)>();
+            foreach (var m in _model.Members)
+                joined.Add(m.NodeA < m.NodeB ? (m.NodeA, m.NodeB) : (m.NodeB, m.NodeA));
+            return (a, b) => joined.Contains(a < b ? (a, b) : (b, a));
         }
 
         void Reject(string message)
