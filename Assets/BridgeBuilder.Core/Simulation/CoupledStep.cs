@@ -71,6 +71,7 @@ namespace BridgeBuilder.Core
         readonly CarState[] _cars;          // per slot; null = empty
         readonly Contact[][] _contacts;     // per slot, per wheel: where last step's load lands
         readonly DeckSample[][] _samples;   // per slot, reused every step
+        readonly int[] _serials;            // per slot, bumped each time a new car takes the slot
 
         public Vec3[] Positions { get; private set; }     // bridge world, current
         public IFrameIntegrator Frame => _frame;
@@ -83,6 +84,9 @@ namespace BridgeBuilder.Core
 
         /// <summary>The car in a slot, or null if the slot is empty. Bridge world.</summary>
         public CarState CarAt(int slot) => _cars[slot];
+
+        /// <summary>Changes whenever a new car takes the slot, so a view can tell a new car from the old one.</summary>
+        public int CarSerial(int slot) => _serials[slot];
 
         /// <summary>The real floor, room units, where debris lands (a challenge override replaces it).</summary>
         public double? FloorRoomHeight { get; set; }
@@ -107,6 +111,7 @@ namespace BridgeBuilder.Core
             _cars = new CarState[carCapacity];
             _contacts = new Contact[carCapacity][];
             _samples = new DeckSample[carCapacity][];
+            _serials = new int[carCapacity];
         }
 
         /// <summary>Puts a car in the first free slot. Returns the slot, or -1 when every slot is taken.</summary>
@@ -119,6 +124,7 @@ namespace BridgeBuilder.Core
                 if (_cars[slot] != null)
                     continue;
                 _cars[slot] = state ?? throw new ArgumentNullException(nameof(state));
+                _serials[slot]++;
                 int wheels = _config.Car.WheelCount;
                 if (_contacts[slot] == null || _contacts[slot].Length != wheels)
                 {

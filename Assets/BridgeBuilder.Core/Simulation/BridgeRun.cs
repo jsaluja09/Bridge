@@ -31,6 +31,8 @@ namespace BridgeBuilder.Core
         public RunResult Result;
         public string Message = "";
         public string Lesson = "";        // why the first member failed, in plain words
+        public FailureMode FirstBreak;    // how the first member failed (None if nothing broke)
+        public bool Stuck;                // the test timed out with nothing fallen
         public double Time;
         public int MembersLost;
         public double PeakUtilization;
@@ -268,6 +270,8 @@ namespace BridgeBuilder.Core
             snap.Result = Result;
             snap.Message = Message;
             snap.Lesson = Lesson;
+            snap.FirstBreak = PhaseResult.FirstBreak;
+            snap.Stuck = Stuck;
             snap.Time = Time;
             snap.MembersLost = MembersLost;
             snap.PeakUtilization = PeakUtilization;
