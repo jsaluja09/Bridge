@@ -36,15 +36,6 @@ namespace BridgeBuilder.Core
             Brief = "Build a bridge that survives calm, wind, snow, traffic and a rush-hour jam.",
             Budget = Constants.Phases.LevelBudget,
         };
-
-        /// <summary>The game's starting challenges. Budgets are room meters of line at the default cost.</summary>
-        public static ChallengeConfig[] Defaults() => new[]
-        {
-            new ChallengeConfig { Name = "First crossing", Brief = "Get a car across. Hint: triangles are strong.", Budget = 14 },
-            new ChallengeConfig { Name = "Heavy truck", Brief = "A 12 tonne truck. Spread its weight.", CarWeightKg = 12000, Budget = 18 },
-            new ChallengeConfig { Name = "Crosswind", Brief = "A 15 m/s wind pushes from the side.", WindSpeed = 15, Budget = 16 },
-            new ChallengeConfig { Name = "Icy and windy", Brief = "Slippery tires and a 10 m/s wind.", WindSpeed = 10, Grip = 0.3, Budget = 16 },
-        };
     }
 
     /// <summary>Which surface the car starts from (spec 2.8); the other is the far surface.</summary>

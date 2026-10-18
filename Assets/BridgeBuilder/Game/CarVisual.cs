@@ -62,6 +62,9 @@ namespace BridgeBuilder.Game
             }
         }
 
+        /// <summary>Sets the body color; call before the car is first shown.</summary>
+        public void Tint(Color body) => bodyColor = body;
+
         public void Hide()
         {
             if (_root != null)

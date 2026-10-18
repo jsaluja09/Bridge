@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using BridgeBuilder.Core;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -110,13 +111,46 @@ namespace BridgeBuilder.Game
             Add(p, Vector3.forward, radius, c);
             Add(p, Vector3.back, radius, c);
             int top = start, bottom = start + 1;
-            int[] ring = { start + 2, start + 4, start + 3, start + 5 };
             for (int i = 0; i < 4; i++)
             {
-                int x = ring[i], y = ring[(i + 1) % 4];
+                int x = start + DotRing[i], y = start + DotRing[(i + 1) % 4];
                 Tri(top, x, y);
                 Tri(bottom, y, x);
             }
+        }
+
+        /// <summary>The octahedron's middle ring (left, forward, right, back) as offsets from its first vertex.</summary>
+        static readonly int[] DotRing = { 2, 4, 3, 5 };
+
+        /// <summary>A flat star facing `normal`: filled (scale 0..) and/or outlined, centered on p. radius in meters.</summary>
+        public void Star(Vector3 p, Vector3 normal, Vector3 up, float radius, float fill, Color fillColor, Color outlineColor, float outlineRadius)
+        {
+            Vector3 right = Vector3.Cross(up, normal).normalized;
+            up = Vector3.Cross(normal, right).normalized;
+            var points = StarPoints(radius);
+            for (int i = 0; i < 10; i++)
+            {
+                Vector3 a = p + right * points[i].x + up * points[i].y;
+                Vector3 b = p + right * points[(i + 1) % 10].x + up * points[(i + 1) % 10].y;
+                Tube(a, b, outlineRadius, outlineColor);
+                if (fill > 0f)
+                    Triangle(p, Vector3.LerpUnclamped(p, a, fill), Vector3.LerpUnclamped(p, b, fill), fillColor);
+            }
+        }
+
+        readonly Vector2[] _star = new Vector2[10];
+        float _starRadius = -1f;
+
+        Vector2[] StarPoints(float radius)
+        {
+            if (radius != _starRadius)
+            {
+                var points = StarShape.Points(radius);
+                for (int i = 0; i < 10; i++)
+                    _star[i] = new Vector2((float)points[i].x, (float)points[i].y);
+                _starRadius = radius;
+            }
+            return _star;
         }
 
         void Add(Vector3 center, Vector3 direction, float radius, Color32 color)

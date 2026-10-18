@@ -47,9 +47,14 @@ namespace BridgeBuilder.Game
                     DrawPads();
                     DrawRun();
                     break;
+                case Phase.Results:
+                    DrawPads();
+                    DrawRun();
+                    DrawStars();
+                    break;
             }
             _view.End();
-            if (_phase != Phase.Build && _phase != Phase.Testing)
+            if (_phase == Phase.Brief || _phase == Phase.Place)
                 _car.Hide();
         }
 
@@ -144,7 +149,7 @@ namespace BridgeBuilder.Game
             if (_parked == null || _parkedOn != pad)
             {
                 Vec3 spot = pad.FrontCenter - pad.Forward * (pad.Depth / 2);
-                _parked = CarPoseTracker.Parked(Constants.Car.Standard(Challenge.CarWeightKg), Scale, spot, pad.Forward);
+                _parked = CarPoseTracker.Parked(Constants.Car.Standard(_level.CarWeightKg), Scale, spot, pad.Forward);
                 _parkedOn = pad;
             }
             _car.Show(_parked);
@@ -192,8 +197,80 @@ namespace BridgeBuilder.Game
             }
             _fx.DrawPieces(_view, memberRadius);
             DrawJoints(input, i => V(pos[i]), snap.Utilization, _fx.NodeFade);
+            if (_phaseEndedAt >= 0f || _phase == Phase.Results)
+                DrawWeakMember(snap);
+            if (_runningPhase != null && _runningPhase.Kind == PhaseKind.Snow)
+                DrawSnow();
 
-            _car.Show(_worker.LatestCarPose);
+            _car.Show(_worker.LatestCars);
+        }
+
+        /// <summary>Points at the member that broke first, or came closest to breaking, with a pulsing sleeve.</summary>
+        void DrawWeakMember(RunSnapshot snap)
+        {
+            int k = snap.WeakMember;
+            if (k < 0)
+                return;
+            var m = snap.Bridge.Input.Members[k];
+            Vector3 a = V(snap.Positions[snap.Bridge.NodeIndex[m.NodeA]]), b = V(snap.Positions[snap.Bridge.NodeIndex[m.NodeB]]);
+            Color c = snap.State[k] == MemberState.Broken ? warningColor : new Color(1f, 0.85f, 0.1f);
+            _view.Tube(a, b, memberRadius * (2f + Pulse(6f)), c);
+        }
+
+        // ---------- Snow ----------
+
+        const int SnowFlakes = 250;
+        Vec3 _snowMin, _snowMax;
+        Pad[] _snowFor;
+
+        /// <summary>Flakes falling through a box over both pads (Snowfall: positions from time alone).</summary>
+        void DrawSnow()
+        {
+            if (_snowFor != _pads)
+            {
+                _snowMin = new Vec3(double.MaxValue, double.MaxValue, double.MaxValue);
+                _snowMax = new Vec3(double.MinValue, double.MinValue, double.MinValue);
+                foreach (var pad in _pads)
+                {
+                    foreach (var c in pad.Corners())
+                    {
+                        _snowMin = new Vec3(System.Math.Min(_snowMin.X, c.X), System.Math.Min(_snowMin.Y, c.Y), System.Math.Min(_snowMin.Z, c.Z));
+                        _snowMax = new Vec3(System.Math.Max(_snowMax.X, c.X), System.Math.Max(_snowMax.Y, c.Y), System.Math.Max(_snowMax.Z, c.Z));
+                    }
+                }
+                _snowMax = new Vec3(_snowMax.X, _snowMax.Y + 0.6, _snowMax.Z);
+                _snowFor = _pads;
+            }
+            for (int i = 0; i < SnowFlakes; i++)
+                _view.Dot(V(Snowfall.Flake(i, Time.time, _snowMin, _snowMax)), dotRadius * 0.6f, Color.white);
+        }
+
+        // ---------- Stars ----------
+
+        [Header("Stars")]
+        [SerializeField] Color starColor = new Color(1f, 0.82f, 0.15f);
+        [SerializeField] Color starOutlineColor = new Color(0.45f, 0.45f, 0.5f);
+        [SerializeField] float starRadius = 0.045f;
+
+        /// <summary>Three stars above the results: earned ones fill in one after another, the rest stay outlines.</summary>
+        void DrawStars()
+        {
+            var cam = Camera.main;
+            if (cam == null)
+                return;
+            Vector3 center = HudAnchor(cam) + Vector3.up * 0.42f;         // just above the HUD text box (0.6 m tall)
+            Vector3 toCam = cam.transform.position - center;
+            Vector3 normal = Vector3.ProjectOnPlane(toCam, Vector3.up).normalized;
+            Vector3 right = Vector3.Cross(Vector3.up, normal).normalized;
+            float seconds = Time.time - _resultsShownAt;
+            int earned = Stars;
+            for (int i = 0; i < TestPhases.MaxStars; i++)
+            {
+                Vector3 p = center + right * ((i - 1) * starRadius * 2.6f) + Vector3.up * (i == 1 ? starRadius * 0.5f : 0f);
+                float fill = (float)StarReveal.Fill(i, earned, seconds);
+                Color outline = fill > 0f ? starColor * 0.75f : starOutlineColor;
+                _view.Star(p, normal, Vector3.up, starRadius, fill, starColor, outline, memberRadius * 0.5f);
+            }
         }
 
         // ---------- Shared ----------

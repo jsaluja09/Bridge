@@ -1,3 +1,4 @@
+using System.Linq;
 using BridgeBuilder.Core;
 using TMPro;
 using UnityEngine;
@@ -59,6 +60,7 @@ namespace BridgeBuilder.Game
                     ? "Touch the spot where the bridge STARTS\nand pull the trigger"
                     : "Now touch where the bridge ENDS\n<size=70%>X: undo</size>",
                 Phase.Build => BuildText(),
+                Phase.Results => ResultsText(),
                 _ => TestText(),
             };
             string message = HudMessages.Current;
@@ -69,29 +71,28 @@ namespace BridgeBuilder.Game
             _hud.text = text;
             _hud.fontSize = hudFontSize;
 
-            Vector3 anchor;
-            if (_phase == Phase.Build || _phase == Phase.Testing)
-                anchor = (V(_pads[0].FrontCenter) + V(_pads[1].FrontCenter)) * 0.5f + Vector3.up * 0.45f;
-            else
-                anchor = cam.transform.position + Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up).normalized * 0.8f - Vector3.up * 0.1f;
-            _hud.transform.position = anchor;
-            _hud.transform.rotation = Quaternion.LookRotation(anchor - cam.transform.position, Vector3.up);
+            _hud.transform.position = HudAnchor(cam);
+            _hud.transform.rotation = Quaternion.LookRotation(_hud.transform.position - cam.transform.position, Vector3.up);
         }
 
-        string BriefText()
-        {
-            var c = Challenge;
-            string wind = c.WindSpeed > 0 ? $"{c.WindSpeed:F0} m/s wind" : "no wind";
-            return $"<b>{c.Name}</b>  ({_challengeIndex + 1}/{_challenges.Length})\n{c.Brief}\n" +
-                   $"Vehicle {c.CarWeightKg / 1000:F1} t  ·  {wind}  ·  Material {c.Budget:F0} m\n" +
-                   "<size=70%>Stick: choose   ·   A: start</size>";
-        }
+        /// <summary>Above the middle of the bridge once it exists, otherwise in front of the player.</summary>
+        Vector3 HudAnchor(Camera cam) => _phase == Phase.Brief || _phase == Phase.Place
+            ? cam.transform.position + Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up).normalized * 0.8f - Vector3.up * 0.1f
+            : (V(_pads[0].FrontCenter) + V(_pads[1].FrontCenter)) * 0.5f + Vector3.up * 0.45f;
+
+        static readonly string PhaseNames = string.Join(", ", TestPhases.All.Select(p => p.Name));
+
+        string BriefText() =>
+            $"<b>{_level.Name}</b>\n{_level.Brief}\n" +
+            $"Material {_level.Budget:F0} m   ·   Tests: {PhaseNames}\n" +
+            "<size=70%>A: start</size>";
 
         string BuildText()
         {
-            string material = $"Material {_model.Spent:F1} / {Challenge.Budget:F0} m";
+            string material = $"Material {_model.Spent:F1} / {_level.Budget:F0} m";
             string road = _bridge.Road.Ok ? "<color=#5CE65C>Road ready</color>" : "Road: draw two flat lines side by side, pad to pad";
-            string text = $"{material}   ·   {road}\n" +
+            string best = _bestStars > 0 ? $"   ·   <color=#FFD24A>Best: {_bestStars} of {TestPhases.MaxStars} stars</color>" : "";
+            string text = $"{material}   ·   {road}{best}\n" +
                           "<size=70%>Hold trigger: draw   ·   Grip on a line: delete   ·   A: test   ·   B: undo   ·   X: clear   ·   Y: mirror " + (_mirror ? "<b>on</b>" : "off") + "</size>";
             if (PreviewCurrent)
                 text += "\n<size=60%>Colors show how hard the bridge works to hold itself up</size>";
@@ -100,22 +101,41 @@ namespace BridgeBuilder.Game
 
         string TestText()
         {
+            string title = $"<b>Test {_runningIndex + 1} of {TestPhases.All.Count}: {_runningPhase.Name}</b>";
             var snap = _snapshot;
             if (snap == null)
-                return "Starting...";
+                return $"{title}\nStarting...";
             // Failure messages arrive through HudMessages while testing (W4-07).
             if (snap.Result == RunResult.Running)
-                return $"Testing...   worst load {Mathf.RoundToInt((float)snap.WorstUtilization * 100)}%" + SolverStats();
+                return $"{title}\nworst load {Mathf.RoundToInt((float)snap.WorstUtilization * 100)}%" + SolverStats();
 
-            bool pass = snap.Result == RunResult.Passed;
-            string verdict = pass ? "<color=#5CE65C>PASS</color>" : "<color=#FF5050>FAIL</color>";
-            string stars = pass && _stars > 0 ? $"  <color=#FFD24A>{_stars} of 3 stars{(_stars == 3 ? "!" : "")}</color>" : "";
-            // Keep the summary on the result panel once the HUD message has gone.
-            var summary = _fx.Summary;
-            string lesson = summary != null && HudMessages.Current != summary.Text ? $"\n<color=#FFD24A>{summary.Text}</color>" : "";
-            return $"{verdict}{stars}  {snap.Message}{lesson}\n" +
-                   $"Members broken: {snap.MembersLost}   ·   Highest load: {Mathf.RoundToInt((float)snap.PeakUtilization * 100)}%\n" +
-                   "<size=70%>A: back to building</size>" + SolverStats();
+            var outcome = _sequence.Outcomes[_sequence.Outcomes.Count - 1];
+            string verdict = outcome.Passed ? "<color=#5CE65C>PASSED</color>" : "<color=#FF5050>FAILED</color>";
+            string next = outcome.Passed && !_sequence.Finished ? $"\n<size=70%>Next: {_sequence.Current.Name}</size>" : "";
+            return $"{title}   {verdict}\n{snap.Message}\n<color=#FFD24A>{outcome.Tip}</color>{next}" + SolverStats();
+        }
+
+        string ResultsText() => _resultsText;
+
+        /// <summary>
+        /// Built once when the results appear (the stars are drawn above it): each phase's verdict, why the last
+        /// one failed, the advice, and what to press.
+        /// </summary>
+        string BuildResultsText()
+        {
+            var lines = new System.Text.StringBuilder();
+            foreach (var phase in TestPhases.All)
+            {
+                var outcome = _sequence.Outcomes.FirstOrDefault(o => o.Phase == phase);
+                string mark = outcome == null ? "<color=#808080>not reached</color>"
+                            : outcome.Passed ? "<color=#5CE65C>held</color>" : "<color=#FF5050>failed</color>";
+                lines.Append($"{phase.Name}: {mark}   ");
+            }
+            var last = _sequence.Outcomes[_sequence.Outcomes.Count - 1];
+            string summary = !last.Passed && _fx.Summary != null ? $"\n{_fx.Summary.Text}" : "";
+            string point = _snapshot != null && _snapshot.WeakMember >= 0 ? "\n<size=70%>The flashing beam is the weakest spot.</size>" : "";
+            return $"<b>{Stars} of {TestPhases.MaxStars} stars</b>\n<size=70%>{lines}</size>{summary}\n" +
+                   $"<color=#FFD24A>{last.Tip}</color>{point}\n<size=70%>A: back to building</size>";
         }
 
         string SolverStats()
