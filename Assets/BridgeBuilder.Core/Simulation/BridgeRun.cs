@@ -39,14 +39,17 @@ namespace BridgeBuilder.Core
 
     /// <summary>
     /// One test of a bridge (spec 2.8, 2.9, 2.11): the coupled bridge and car on a copy of the design, plus the
-    /// wind, pass or fail, members lost, and the lesson for students. Keep stepping after the result to let a
-    /// collapse play out. Not thread-aware; the Unity host steps it on its worker thread.
+    /// wind, pass or fail, members lost, and the lesson for students. With RunConfiguration.Traffic set, a
+    /// stream of cars (or a jam) replaces the single car: the test passes when the traffic is through (or the
+    /// jam has held) and fails if any car falls. Keep stepping after the result to let a collapse play out.
+    /// Not thread-aware; the Unity host steps it on its worker thread.
     /// </summary>
     public sealed class BridgeRun
     {
         readonly CoupledStep _coupled;
         readonly RunConfiguration _config;
         readonly SuspensionCar _car;
+        readonly Traffic _traffic;         // null for the single test car
         readonly Pad _far;
         readonly Vec3 _gap;
         readonly double _scale;
@@ -54,6 +57,8 @@ namespace BridgeBuilder.Core
         readonly HashSet<int> _lost = new HashSet<int>();
         double _airborne;
         long _step;
+
+        public Traffic Traffic => _traffic;
 
         public CompiledBridge Bridge { get; }
         public RunResult Result { get; private set; } = RunResult.Running;
@@ -71,17 +76,26 @@ namespace BridgeBuilder.Core
             _config = config;
             _scale = config.ScaleFactor;
             _car = new SuspensionCar(Constants.Loads.Gravity, config.Grip, Constants.Car.CruiseSpeed);
-            _coupled = new CoupledStep(_car, bridge.Pads, bridge.Decks) { FloorRoomHeight = floorRoomHeight };
+            int capacity = config.Traffic != null ? Constants.Traffic.MaxCars : 1;
+            _coupled = new CoupledStep(_car, bridge.Pads, bridge.Decks, carCapacity: capacity) { FloorRoomHeight = floorRoomHeight };
 
             var start = bridge.Pads[config.StartSurfaceId];
             _far = bridge.Pads[1 - config.StartSurfaceId];
             _gap = start.Forward;
             ApplyWind();
             _coupled.Reset(bridge.Input, config);
+            if (config.Traffic != null)
+            {
+                var lanes = LanePlan.Plan(bridge, config.StartSurfaceId, _scale);
+                _traffic = new Traffic(_coupled, lanes, config.Traffic, LowestPadY(), config.Grip);
+            }
             foreach (int k in _coupled.InitialFailures)
                 Lose(k);
             TrackUtilization();
         }
+
+        /// <summary>Bridge-world height of the lower pad.</summary>
+        double LowestPadY() => Math.Min(_far.Height, Bridge.Pads[_config.StartSurfaceId].Height) * _scale;
 
         /// <summary>Wind as static drag on members and a steady side force on the car (HG-car-and-wind: GUESS model).</summary>
         void ApplyWind()
@@ -117,12 +131,53 @@ namespace BridgeBuilder.Core
         {
             Time += dt;
             _step++;
+            if (_traffic != null)
+                StepTraffic(dt);
+            else
+                StepSingleCar(dt);
+        }
+
+        void StepSingleCar(double dt)
+        {
             var output = _coupled.Step(_wheelLoads, dt, null);
             var car = output.Car;
             _wheelLoads = new WheelLoad[car.WheelLoads.Length];
             for (int i = 0; i < _wheelLoads.Length; i++)
                 _wheelLoads[i] = new WheelLoad(i, car.WheelLoads[i]);
+            TrackMembers();
 
+            if (Result != RunResult.Running)
+                return;
+            _airborne = car.Falling ? _airborne + dt : 0;
+            Vec3[] edge = _far.Corners();
+
+            if (Scoring.ReachedFarSurface(car.Position, edge[0], edge[1], _gap, _scale) && !car.Falling)
+                Finish(RunResult.Passed, "The car made it across!");
+            else if (_airborne > Constants.Car.FallSeconds || car.Position.Y < LowestPadY() - 5)
+                Finish(RunResult.Failed, "The car fell.");
+            else if (Time > Constants.Car.TimeoutSeconds)
+                Finish(RunResult.Failed, "The car got stuck.");
+        }
+
+        void StepTraffic(double dt)
+        {
+            _traffic.BeforeStep();
+            _coupled.Step(null, dt, null);             // every car loads the bridge with its own last wheel loads
+            _traffic.AfterStep(dt);
+            TrackMembers();
+
+            if (Result != RunResult.Running)
+                return;
+            if (_traffic.Fell > 0)
+                Finish(RunResult.Failed, _traffic.Fell == 1 ? "A car fell." : $"{_traffic.Fell} cars fell.");
+            else if (_traffic.Finished)
+                Finish(RunResult.Passed, _config.Traffic.Jam ? "The bridge held the traffic jam!" : $"All {_traffic.Crossed} cars made it across!");
+            else if (Time > Constants.Traffic.TimeoutSeconds)
+                Finish(RunResult.Failed, "The traffic got stuck.");
+        }
+
+        void TrackMembers()
+        {
             var frame = _coupled.Frame;
             for (int k = 0; k < Bridge.Input.Members.Count; k++)
             {
@@ -130,19 +185,6 @@ namespace BridgeBuilder.Core
                     Lose(k);
             }
             TrackUtilization();
-
-            if (Result != RunResult.Running)
-                return;
-            _airborne = car.Falling ? _airborne + dt : 0;
-            Vec3[] edge = _far.Corners();
-            double lowest = Math.Min(_far.Height, Bridge.Pads[_config.StartSurfaceId].Height) * _scale;
-
-            if (Scoring.ReachedFarSurface(car.Position, edge[0], edge[1], _gap, _scale) && !car.Falling)
-                Finish(RunResult.Passed, "The car made it across!");
-            else if (_airborne > Constants.Car.FallSeconds || car.Position.Y < lowest - 5)
-                Finish(RunResult.Failed, "The car fell.");
-            else if (Time > Constants.Car.TimeoutSeconds)
-                Finish(RunResult.Failed, "The car got stuck.");
         }
 
         void Lose(int member)
@@ -199,13 +241,16 @@ namespace BridgeBuilder.Core
             }
 
             var car = _coupled.Car;
-            Vec3 side = Vec3.Cross(Vec3.UnitY, car.Heading);
-            Vec3 forward = (car.Heading * Math.Cos(car.Pitch) + Vec3.UnitY * Math.Sin(car.Pitch)).Normalized();
-            Vec3 up = (Vec3.UnitY * Math.Cos(car.Roll) - side * Math.Sin(car.Roll)).Normalized();
-            Vec3 ride = Vec3.UnitY * (_config.Car.RestLength - Constants.Car.StaticSag);
-            snap.CarPosition = (car.Position - ride) / _scale;
-            snap.CarForward = forward;
-            snap.CarUp = up;
+            if (car != null)
+            {
+                Vec3 side = Vec3.Cross(Vec3.UnitY, car.Heading);
+                Vec3 forward = (car.Heading * Math.Cos(car.Pitch) + Vec3.UnitY * Math.Sin(car.Pitch)).Normalized();
+                Vec3 up = (Vec3.UnitY * Math.Cos(car.Roll) - side * Math.Sin(car.Roll)).Normalized();
+                Vec3 ride = Vec3.UnitY * (_config.Car.RestLength - Constants.Car.StaticSag);
+                snap.CarPosition = (car.Position - ride) / _scale;
+                snap.CarForward = forward;
+                snap.CarUp = up;
+            }
             snap.Result = Result;
             snap.Message = Message;
             snap.Lesson = Lesson;

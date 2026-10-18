@@ -62,6 +62,7 @@ namespace BridgeBuilder.Core
         public double MaterialBudget { get; set; }
         public double? GroundHeightOverride { get; set; }  // absolute height
         public double ScaleFactor { get; set; }
+        public TrafficSpec Traffic { get; set; }              // extension: null = the single test car
     }
 
     public sealed class CarState
