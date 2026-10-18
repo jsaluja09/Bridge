@@ -55,6 +55,8 @@ namespace BridgeBuilder.Game
                     DrawStars();
                     break;
             }
+            if (_phase != Phase.Brief && _phase != Phase.Place)
+                DrawFlag();
             _view.End();
             if (_phase == Phase.Brief || _phase == Phase.Place)
                 _car.Hide();
@@ -259,6 +261,8 @@ namespace BridgeBuilder.Game
                 DrawWeakMember(snap);
             if (_runningPhase != null && _runningPhase.Kind == PhaseKind.Snow)
                 DrawSnow();
+            if (_runningPhase != null && _runningPhase.Kind == PhaseKind.Wind)
+                DrawWind();
 
             _car.Show(_worker.LatestCars);
         }
@@ -275,32 +279,57 @@ namespace BridgeBuilder.Game
             _view.Tube(a, b, memberRadius * (2f + Pulse(6f)), c);
         }
 
-        // ---------- Snow ----------
+        // ---------- Weather and the town ----------
 
         const int SnowFlakes = 250;
-        Vec3 _snowMin, _snowMax;
-        Pad[] _snowFor;
+        const int WindStreakCount = 40;
 
-        /// <summary>Flakes falling through a box over both pads (Snowfall: positions from time alone).</summary>
+        /// <summary>
+        /// Flakes falling through the canyon (Snowfall: positions from time alone). Snowfall works in a box, given here
+        /// in canyon coordinates (x = along, y = height, z = across) and mapped onto the canyon.
+        /// </summary>
         void DrawSnow()
         {
-            if (_snowFor != _pads)
-            {
-                _snowMin = new Vec3(double.MaxValue, double.MaxValue, double.MaxValue);
-                _snowMax = new Vec3(double.MinValue, double.MinValue, double.MinValue);
-                foreach (var pad in _pads)
-                {
-                    foreach (var c in pad.Corners())
-                    {
-                        _snowMin = new Vec3(System.Math.Min(_snowMin.X, c.X), System.Math.Min(_snowMin.Y, c.Y), System.Math.Min(_snowMin.Z, c.Z));
-                        _snowMax = new Vec3(System.Math.Max(_snowMax.X, c.X), System.Math.Max(_snowMax.Y, c.Y), System.Math.Max(_snowMax.Z, c.Z));
-                    }
-                }
-                _snowMax = new Vec3(_snowMax.X, _snowMax.Y + 0.6, _snowMax.Z);
-                _snowFor = _pads;
-            }
+            double top = System.Math.Max(_canyon.NearTop, _canyon.FarTop) + 0.6;
+            var min = new Vec3(-Constants.Canyon.ClifftopDepthMeters, _canyon.FloorY, -_canyon.HalfWidth);
+            var max = new Vec3(_canyon.Span + Constants.Canyon.ClifftopDepthMeters, top, _canyon.HalfWidth);
             for (int i = 0; i < SnowFlakes; i++)
-                _view.Dot(V(Snowfall.Flake(i, Time.time, _snowMin, _snowMax)), dotRadius * 0.6f, Color.white);
+            {
+                var f = Snowfall.Flake(i, Time.time, min, max);
+                _view.Dot(V(_canyon.Point(f.X, f.Z, f.Y)), dotRadius * 0.6f, Color.white);
+            }
+        }
+
+        /// <summary>Faint streaks blowing across the canyon the way the wind does.</summary>
+        void DrawWind()
+        {
+            Color streak = new Color(0.85f, 0.92f, 1f);
+            for (int i = 0; i < WindStreakCount; i++)
+            {
+                var (tail, head) = WindStreaks.Streak(_canyon, i, Time.time);
+                _view.Tube(V(tail), V(head), dotRadius * 0.25f, streak);
+            }
+        }
+
+        /// <summary>A small flag waving from the town's flagpole once the town is connected.</summary>
+        void DrawFlag()
+        {
+            var top = _canyonView.FlagTop;
+            if (top == null || !_canyonView.Lit)
+                return;
+            const int strips = 5;
+            const float width = 0.06f, height = 0.035f;
+            Vector3 along = V(_canyon.Across), wave = V(_canyon.Forward);
+            Color flag = new Color(0.95f, 0.25f, 0.2f);
+            for (int k = 0; k < strips; k++)
+            {
+                float x0 = width * k / strips, x1 = width * (k + 1) / strips;
+                Vector3 p0 = top.Value + along * x0 + wave * (0.006f * x0 / width * Mathf.Sin(Time.time * 6f - k));
+                Vector3 p1 = top.Value + along * x1 + wave * (0.006f * x1 / width * Mathf.Sin(Time.time * 6f - k - 1));
+                Vector3 down = Vector3.down * height;
+                _view.Triangle(p0, p1, p1 + down, flag);
+                _view.Triangle(p0, p1 + down, p0 + down, flag);
+            }
         }
 
         // ---------- Stars ----------

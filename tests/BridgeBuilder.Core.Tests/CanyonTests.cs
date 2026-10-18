@@ -240,4 +240,56 @@ namespace BridgeBuilder.Core.Tests
                 Assert.Equal(m.Surfaces[i] == CanyonSurface.Window, !dark[i].Equals(lit[i]));
         }
     }
+
+    /// <summary>Wind streaks for the wind phase.</summary>
+    public class WindStreakTests
+    {
+        static CanyonLayout Layout()
+        {
+            var (near, far) = Pad.FromTaps(new Vec3(0, 0.9, 0), new Vec3(1, 0.9, 0));
+            return new CanyonLayout(near, far);
+        }
+
+        [Fact]
+        public void Streaks_StayInTheCanyonAndAreShort()
+        {
+            var c = Layout();
+            for (int i = 0; i < 40; i++)
+            {
+                for (double t = 0; t < 10; t += 0.37)
+                {
+                    var (tail, head) = WindStreaks.Streak(c, i, t);
+                    foreach (var p in new[] { tail, head })
+                    {
+                        var (along, across) = c.Local(p);
+                        Assert.InRange(along, 0, c.Span);
+                        Assert.InRange(across, -c.HalfWidth - 1e-9, c.HalfWidth + 1e-9);
+                        Assert.InRange(p.Y, c.FloorY, c.NearTop + WindStreaks.HeightAboveTops + 1e-9);
+                    }
+                    Assert.InRange(Vec3.Distance(tail, head), 0, WindStreaks.Length + 1e-9);
+                }
+            }
+        }
+
+        [Fact]
+        public void Streaks_BlowAcrossTheCanyonAndWrap()
+        {
+            var c = Layout();
+            var (_, before) = WindStreaks.Streak(c, 5, 1.0);
+            var (_, after) = WindStreaks.Streak(c, 5, 1.1);
+            double moved = c.Local(after).across - c.Local(before).across;
+            Assert.True(Math.Abs(moved - WindStreaks.Speed * 0.1) < 1e-9 || moved < 0);      // downwind, or wrapped
+            double loop = 2 * c.HalfWidth / WindStreaks.Speed;
+            Assert.Equal(before.Z, WindStreaks.Streak(c, 5, 1.0 + loop).head.Z, 6);
+        }
+
+        [Fact]
+        public void Streaks_AreRepeatableAndSpreadOut()
+        {
+            var c = Layout();
+            var a = Enumerable.Range(0, 40).Select(i => WindStreaks.Streak(c, i, 2).head).ToList();
+            Assert.Equal(a, Enumerable.Range(0, 40).Select(i => WindStreaks.Streak(c, i, 2).head));
+            Assert.True(a.Select(p => Math.Round(p.Y, 2)).Distinct().Count() > 20);
+        }
+    }
 }

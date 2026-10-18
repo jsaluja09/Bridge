@@ -229,6 +229,8 @@ namespace BridgeBuilder.Game
             var config = _runningPhase.Configure(_level, _start, _pads[_start.Start].Across, Scale);
             _worker.StartRun(_runBridge, config, _floor);
             _fx.Begin(_runBridge, _floor);
+            _canyonView.SetSnow(_runningPhase.Kind == PhaseKind.Snow);
+            _canyonView.SetLights(false);
             HudMessages.Show(_runningPhase.Intro, passPauseSeconds + 1f);
             _snapshot = null;
             _lastLost = 0;
@@ -295,6 +297,7 @@ namespace BridgeBuilder.Game
             _bestStars = Mathf.Max(_bestStars, Stars);
             _resultsShownAt = Time.time;
             _resultsText = BuildResultsText();
+            _canyonView.SetLights(Stars == TestPhases.MaxStars);     // the town lights up when it is connected
             _phase = Phase.Results;
         }
 
@@ -317,6 +320,8 @@ namespace BridgeBuilder.Game
             _worker.StopRun();
             _car.Hide();
             _fx.Clear();
+            _canyonView.SetSnow(false);
+            _canyonView.SetLights(_bestStars == TestPhases.MaxStars);
             HudMessages.Clear();
             _snapshot = null;
             _phase = Phase.Build;

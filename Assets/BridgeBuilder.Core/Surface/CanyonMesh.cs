@@ -19,7 +19,7 @@ namespace BridgeBuilder.Core
         Pole,
     }
 
-    /// <summary>An 8-bit color, so Core stays free of UnityEngine.</summary>
+    /// <summary>An 8-bit color (Core has no engine color type).</summary>
     public readonly struct Rgb
     {
         public readonly byte R, G, B;

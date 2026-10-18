@@ -16,6 +16,9 @@ namespace BridgeBuilder.Game
         Color32[] _colors;
         bool _snowy, _lit;
 
+        /// <summary>The town's windows are lit (it was connected).</summary>
+        public bool Lit => _lit;
+
         /// <summary>Where the town's flag hangs from, once the canyon is built.</summary>
         public Vector3? FlagTop => _canyon != null && _object.activeSelf ? _canyon.FlagTop.ToUnity() : (Vector3?)null;
 
