@@ -36,6 +36,8 @@ namespace BridgeBuilder.Game
                     foreach (var t in _taps)
                         _view.Dot(t, jointRadius * 1.5f, padColor);
                     _view.Dot(_pointer.Tip, dotRadius * 1.5f, highlightColor);
+                    if (_taps.Count == 1)
+                        DrawCanyonGhost(_taps[0], _pointer.Tip);
                     break;
                 case Phase.Build:
                     DrawPads();
@@ -58,23 +60,79 @@ namespace BridgeBuilder.Game
                 _car.Hide();
         }
 
+        /// <summary>The ends are the road's ends on each clifftop: road-colored, outlined as supports you can build from.</summary>
         void DrawPads()
         {
             foreach (var pad in _pads)
             {
                 var c = pad.Corners();
-                Color color = pad.Id == _start.Start ? padColor : Color.Lerp(padColor, Color.white, 0.25f);
-                _view.Triangle(V(c[0]), V(c[1]), V(c[2]), color * 0.8f);
-                _view.Triangle(V(c[0]), V(c[2]), V(c[3]), color * 0.8f);
+                Color edge = pad.Id == _start.Start ? padColor : Color.Lerp(padColor, Color.white, 0.25f);
+                _view.Triangle(V(c[0]), V(c[1]), V(c[2]), roadColor);
+                _view.Triangle(V(c[0]), V(c[2]), V(c[3]), roadColor);
                 for (int i = 0; i < 4; i++)
-                    _view.Tube(V(c[i]), V(c[(i + 1) % 4]), memberRadius * 0.6f, color);
+                    _view.Tube(V(c[i]), V(c[(i + 1) % 4]), memberRadius * 0.6f, edge);
             }
             if (_phase == Phase.Build)
+                DrawGroundDots();
+        }
+
+        [Tooltip("Floor dots within this distance of the controller tip brighten, so a pier is easy to aim.")]
+        [SerializeField] float dotRevealMeters = 0.15f;
+
+        /// <summary>Every buildable floor dot faintly; the ones near the controller tip bright and bigger.</summary>
+        void DrawGroundDots()
+        {
+            Vector3 tip = _pointer.Tip;
+            Color faint = groundColor * 0.45f;
+            foreach (var g in _groundDots)
             {
-                foreach (var g in _groundDots)
-                    _view.Dot(V(g), dotRadius, groundColor);
+                Vector3 p = V(g);
+                float near = Mathf.Clamp01(1f - Vector3.Distance(p, tip) / dotRevealMeters);
+                _view.Dot(p, dotRadius * (0.7f + 0.8f * near), Color.Lerp(faint, groundColor, near));
             }
         }
+
+        // ---------- Placement ----------
+
+        CanyonLayout _ghostCanyon;
+        Vector3 _ghostTip;
+
+        /// <summary>
+        /// An outline of the canyon the two taps would make (clifftop edges, walls, floor), following the controller
+        /// after the first tap. Recomputed only when the tip has moved a centimeter.
+        /// </summary>
+        void DrawCanyonGhost(Vector3 first, Vector3 tip)
+        {
+            Vector3 flat = tip - first;
+            flat.y = 0f;
+            if (flat.magnitude < 0.3f)
+                return;                                   // too close to be a bridge (UpdatePlace refuses it too)
+            if (_ghostCanyon == null || Vector3.Distance(tip, _ghostTip) > 0.01f)
+            {
+                double lift = CanyonLayout.LiftNeeded(first.ToCore(), tip.ToCore(), _pointer.FloorY);
+                Vec3 up = Vec3.UnitY * lift;
+                var (a, b) = Pad.FromTaps(first.ToCore() + up, tip.ToCore() + up);
+                _ghostCanyon = new CanyonLayout(a, b);
+                _ghostTip = tip;
+            }
+
+            var c = _ghostCanyon;
+            double w = c.HalfWidth, back = Constants.Canyon.ClifftopDepthMeters, s = c.Span;
+            for (int k = -1; k <= 1; k += 2)
+            {
+                double side = k * w;
+                GhostLine(c, -back, side, c.NearTop, 0, side, c.NearTop);      // near clifftop side edge
+                GhostLine(c, 0, side, c.NearTop, 0, side, c.FloorY);           // near wall corner
+                GhostLine(c, 0, side, c.FloorY, s, side, c.FloorY);            // floor edge
+                GhostLine(c, s, side, c.FloorY, s, side, c.FarTop);            // far wall corner
+                GhostLine(c, s, side, c.FarTop, s + back, side, c.FarTop);     // far clifftop side edge
+            }
+            GhostLine(c, 0, -w, c.NearTop, 0, w, c.NearTop);                   // the two cliff edges
+            GhostLine(c, s, -w, c.FarTop, s, w, c.FarTop);
+        }
+
+        void GhostLine(CanyonLayout c, double a0, double c0, double y0, double a1, double c1, double y1) =>
+            _view.Tube(V(c.Point(a0, c0, y0)), V(c.Point(a1, c1, y1)), memberRadius * 0.4f, Color.Lerp(groundColor, Color.white, 0.4f));
 
         // ---------- Build ----------
 

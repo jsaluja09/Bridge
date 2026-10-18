@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 using BridgeBuilder.Core;
 using UnityEngine;
 
@@ -14,6 +13,7 @@ namespace BridgeBuilder.Game
     /// input, drawing, HUD.
     /// </summary>
     [RequireComponent(typeof(ControllerPointer), typeof(BridgeView), typeof(CarView))]
+    [RequireComponent(typeof(CanyonView))]
     public sealed partial class BridgeGame : MonoBehaviour
     {
         [Tooltip("Show the real room behind the game (Quest passthrough).")]
@@ -33,6 +33,7 @@ namespace BridgeBuilder.Game
         ControllerPointer _pointer;
         BridgeView _view;
         CarView _car;
+        CanyonView _canyonView;
         SimWorker _worker;
         PreviewScheduler _scheduler;
         FailureFx _fx;
@@ -43,6 +44,7 @@ namespace BridgeBuilder.Game
         readonly List<Vector3> _taps = new List<Vector3>();
 
         Pad[] _pads;
+        CanyonLayout _canyon;
         List<Vec3> _groundDots = new List<Vec3>();
         float _floor;
         BridgeModel _model;
@@ -71,6 +73,7 @@ namespace BridgeBuilder.Game
             _pointer = GetComponent<ControllerPointer>();
             _view = GetComponent<BridgeView>();
             _car = GetComponent<CarView>();
+            _canyonView = GetComponent<CanyonView>();
             _fx = GetComponent<FailureFx>();
             if (_fx == null)
                 _fx = gameObject.AddComponent<FailureFx>();
@@ -113,6 +116,7 @@ namespace BridgeBuilder.Game
             if (_pointer.PrimaryPressed || _pointer.TriggerPressed)
             {
                 _taps.Clear();
+                _canyonView.Hide();
                 _phase = Phase.Place;
                 Play(snapClip);
             }
@@ -148,17 +152,20 @@ namespace BridgeBuilder.Game
                 return;
             }
 
+            // Ends tapped too low are lifted so the whole canyon fits above the real floor.
+            float lift = (float)CanyonLayout.LiftNeeded(_taps[0].ToCore(), _taps[1].ToCore(), _pointer.FloorY);
+            if (lift > 0f)
+            {
+                _taps[0] += Vector3.up * lift;
+                _taps[1] += Vector3.up * lift;
+                Flash("Raised the bridge ends so the canyon fits above the floor");
+            }
             var (a, b) = Pad.FromTaps(_taps[0].ToCore(), _taps[1].ToCore());
             _pads = new[] { a, b };
-            float lowest = Mathf.Min(_taps[0].y, _taps[1].y);
-            _floor = Mathf.Min(_pointer.FloorY, lowest - 0.3f);
-            _groundDots.Clear();
-            if (_floor < lowest - 0.15f)
-            {
-                var ea = a.Corners();
-                var eb = b.Corners();
-                _groundDots = GroundPlane.Grid(ea[0], ea[1], eb[0], eb[1], _floor).Select(n => n.Position).ToList();
-            }
+            _canyon = new CanyonLayout(a, b);
+            _canyonView.Show(_canyon);
+            _floor = (float)_canyon.FloorY;            // debris and fallen cars land on the canyon floor
+            _groundDots = _canyon.FloorDots();
 
             _model = new BridgeModel(new BudgetPolicy
             {
