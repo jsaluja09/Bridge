@@ -69,15 +69,14 @@ namespace BridgeBuilder.Core
             var governing = MemberCapacity.Evaluate(force, s, bucklingLength);
             var bending = MemberCapacity.Evaluate(0, Math.Max(myA, myB), Math.Max(mzA, mzB), s.E, s.Iy, s.Iz, s.A,
                                                   s.YieldStrength, s.OuterFiberY, s.OuterFiberZ, bucklingLength);
-            double axial = s.YieldStrength * s.A;
             double r = Math.Sqrt(Math.Min(s.Iy, s.Iz) / s.A);
 
             var failure = new MemberFailure
             {
                 Mode = governing.Governing,
                 Utilization = governing.Utilization,
-                TensionUtilization = Math.Max(force.Axial, 0) / axial,
-                CompressionUtilization = Math.Max(-force.Axial, 0) / axial,
+                TensionUtilization = Math.Max(force.Axial, 0) / (MemberCapacity.TensionStrength(s) * s.A),
+                CompressionUtilization = Math.Max(-force.Axial, 0) / (MemberCapacity.CompressionStrength(s) * s.A),
                 BucklingUtilization = governing.BucklingUtilization,
                 BendingUtilization = bending.Utilization,
                 Slenderness = bucklingLength / r,
