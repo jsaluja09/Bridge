@@ -8,10 +8,7 @@ namespace BridgeBuilder.Core.Tests
     {
         const double Top = 0.75;
 
-        static BridgeModel Model(double budget = 500) => new BridgeModel(new BudgetPolicy
-        {
-            CostPerMeter = 1, CostPerSquareMeter = 1, MaterialBudget = budget, NodeCap = 500,
-        });
+        static BridgeModel Model(double budget = 500) => new BridgeModel(BudgetPolicy.Uniform(1, 1, budget, 500));
 
         static int Rail(BridgeModel m, Vec3 a, Vec3 b)
         {

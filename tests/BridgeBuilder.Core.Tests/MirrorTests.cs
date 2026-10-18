@@ -173,7 +173,7 @@ namespace BridgeBuilder.Core.Tests
         public void BudgetForOnlyTheStroke_RefusesTheWholePair()
         {
             var pads = Rooms.Pads();
-            var policy = new BudgetPolicy { CostPerMeter = 1, CostPerSquareMeter = 1, MaterialBudget = 1.5, NodeCap = 1000 };
+            var policy = BudgetPolicy.Uniform(1, 1, 1.5, 1000);
             var m = new BridgeModel(policy);
 
             var result = StrokeBuilder.Build(m, Piece(P(0, Top, 0.1), P(1, Top, 0.1)), Ctx(pads, true));

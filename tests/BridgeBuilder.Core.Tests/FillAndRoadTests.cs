@@ -36,7 +36,7 @@ namespace BridgeBuilder.Core.Tests
     {
         static (BridgeModel model, int fill) Deck(double lift = 0)
         {
-            var m = new BridgeModel(new BudgetPolicy { CostPerMeter = 1, CostPerSquareMeter = 1, MaterialBudget = 1000, NodeCap = 1000 });
+            var m = new BridgeModel(BudgetPolicy.Uniform(1, 1, 1000, 1000));
             int a = m.AddFixedNode(new Vec3(0, 0, 0)), d = m.AddFixedNode(new Vec3(0, 0, 0.2));
             var top = m.TryAddLine(new[] { LineVertex.Existing(a), LineVertex.New(new Vec3(0.5, 0, 0)), LineVertex.New(new Vec3(1, 0, 0)) });
             var nodesA = m.LineNodes(top.Id);

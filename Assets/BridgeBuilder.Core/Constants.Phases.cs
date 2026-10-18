@@ -11,8 +11,11 @@ namespace BridgeBuilder.Core
             /// <summary>A phase that passed with a member at or above this utilization gets a "close call" tip.</summary>
             public const double CloseCallUtilization = 0.8;
 
-            /// <summary>Material for the one level, room meters of line at the default cost (mirroring doubles each beam).</summary>
-            public const double LevelBudget = 12.0;
+            /// <summary>
+            /// Material for the one level, in Constants.Budget price units; mirroring doubles each beam. Fits a wood
+            /// truss with cable diagonals and its deck, but not the same truss in concrete.
+            /// </summary>
+            public const double LevelBudget = 120.0;
         }
     }
 }

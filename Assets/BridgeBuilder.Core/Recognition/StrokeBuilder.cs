@@ -31,6 +31,8 @@ namespace BridgeBuilder.Core
             public IReadOnlyList<Vec3> GroundDots = Array.Empty<Vec3>();
             /// <summary>Copy every piece across this plane; null builds the stroke alone.</summary>
             public MirrorPlane? Mirror;
+            /// <summary>The material (section id) of every line the stroke and its mirror copy make.</summary>
+            public int SectionId;
         }
 
         public static StrokeResult Build(BridgeModel model, IReadOnlyList<IReadOnlyList<Vec3>> pieces, Context ctx)
@@ -55,7 +57,7 @@ namespace BridgeBuilder.Core
                     var draw = new FreeDraw.Context { Nodes = model.Nodes, Joined = JoinedLookup(model), Pads = ctx.Pads, GroundDots = ctx.GroundDots };
                     foreach (var chain in FreeDraw.Build(piece, draw, out _))
                     {
-                        var result = model.TryAddFreeLine(Vertices(model, chain));
+                        var result = model.TryAddFreeLine(Vertices(model, chain), ctx.SectionId);
                         if (!result.Ok)
                         {
                             if (added > 0)
