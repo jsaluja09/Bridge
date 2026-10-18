@@ -181,7 +181,10 @@ namespace BridgeBuilder.Core.Tests
             var road = Enumerable.Range(0, m.Positions.Count).Where(i => m.Surfaces[i] == CanyonSurface.Road).Select(i => c.Local(m.Positions[i])).ToList();
             Assert.Contains(road, l => l.along < 0);
             Assert.Contains(road, l => l.along > c.Span);
-            Assert.All(road, l => Assert.InRange(Math.Abs(l.across), 0, Constants.Surface.PadWidthMeters / 2 + 0.051));
+            // The main road stays as wide as the ends; the only road wider than that is the town's cross street.
+            double mainRoad = Constants.Surface.PadWidthMeters / 2 + 0.051;
+            Assert.All(road.Where(l => Math.Abs(l.across) > mainRoad), l => Assert.InRange(l.along - c.Span, 0.17 - 1e-9, 0.21 + 1e-9));
+            Assert.All(road.Where(l => l.along < 0), l => Assert.InRange(Math.Abs(l.across), 0, mainRoad));
 
             var (from, to) = c.River();
             for (int i = 0; i < m.Positions.Count; i++)
@@ -291,5 +294,65 @@ namespace BridgeBuilder.Core.Tests
             Assert.Equal(a, Enumerable.Range(0, 40).Select(i => WindStreaks.Streak(c, i, 2).head));
             Assert.True(a.Select(p => Math.Round(p.Y, 2)).Distinct().Count() > 20);
         }
+    }
+
+    /// <summary>The town on the far clifftop: varied, off the road, and lit when connected.</summary>
+    public class CanyonTownTests
+    {
+        static readonly CanyonLayout Layout = new CanyonLayout(Pad.FromTaps(new Vec3(0, 0.9, 0), new Vec3(1, 0.9, 0)).start,
+                                                               Pad.FromTaps(new Vec3(0, 0.9, 0), new Vec3(1, 0.9, 0)).far);
+        static readonly CanyonMesh Mesh = CanyonMesh.Build(Layout);
+
+        static System.Collections.Generic.IEnumerable<int> Where(params CanyonSurface[] surfaces) =>
+            Enumerable.Range(0, Mesh.Positions.Count).Where(i => surfaces.Contains(Mesh.Surfaces[i]));
+
+        static readonly CanyonSurface[] Buildings =
+        {
+            CanyonSurface.House, CanyonSurface.HouseBlue, CanyonSurface.HouseYellow, CanyonSurface.Brick,
+            CanyonSurface.Roof, CanyonSurface.RoofDark, CanyonSurface.Door,
+        };
+
+        [Fact]
+        public void Town_HasVariedHousesAChurchTreesAndASquare()
+        {
+            foreach (var s in Buildings.Concat(new[] { CanyonSurface.Pavement, CanyonSurface.Trunk, CanyonSurface.Leaves, CanyonSurface.FountainWater }))
+                Assert.Contains(s, Mesh.Surfaces);
+        }
+
+        [Fact]
+        public void NothingIsBuiltOnTheMainRoad()
+        {
+            double road = Constants.Surface.PadWidthMeters / 2;
+            Assert.All(Where(Buildings), i => Assert.True(Math.Abs(Layout.Local(Mesh.Positions[i]).across) >= road,
+                $"{Mesh.Surfaces[i]} at {Layout.Local(Mesh.Positions[i])}"));
+        }
+
+        [Fact]
+        public void TheChurchSpireIsTheTallestRoof()
+        {
+            double spire = Where(CanyonSurface.RoofDark).Max(i => Mesh.Positions[i].Y);
+            double roofs = Where(CanyonSurface.Roof).Max(i => Mesh.Positions[i].Y);
+            Assert.True(spire > roofs + 0.05);
+        }
+
+        [Fact]
+        public void TreesGrowOnBothClifftops()
+        {
+            var trees = Where(CanyonSurface.Leaves).Select(i => Layout.Local(Mesh.Positions[i]).along).ToList();
+            Assert.Contains(trees, a => a < 0);
+            Assert.Contains(trees, a => a > Layout.Span);
+        }
+
+        [Fact]
+        public void LightsCoverWindowsLampsAndTheClock()
+        {
+            var lit = Where(CanyonSurface.Window).ToList();
+            Assert.True(lit.Count >= 3 * 40, $"only {lit.Count / 3} lit triangles");     // windows, lamp heads, clock
+            Assert.Contains(lit, i => Mesh.Positions[i].Y > Layout.FarTop + 0.1);            // the clock, high on the tower
+        }
+
+        [Fact]
+        public void TheWholeCanyonStaysWithinBudget() =>
+            Assert.InRange(Mesh.TriangleCount, 1500, 3000);
     }
 }

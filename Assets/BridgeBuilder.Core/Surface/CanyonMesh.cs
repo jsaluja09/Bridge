@@ -17,6 +17,15 @@ namespace BridgeBuilder.Core
         Roof,
         Window,
         Pole,
+        HouseBlue,
+        HouseYellow,
+        Brick,
+        RoofDark,       // slate
+        Door,
+        Pavement,       // sidewalks, the town square, the fountain
+        Trunk,
+        Leaves,
+        FountainWater,
     }
 
     /// <summary>An 8-bit color (Core has no engine color type).</summary>
@@ -54,9 +63,18 @@ namespace BridgeBuilder.Core
                 CanyonSurface.House => new Rgb(236, 226, 206),
                 CanyonSurface.Roof => new Rgb(176, 64, 48),
                 CanyonSurface.Window => lit ? new Rgb(255, 214, 96) : new Rgb(64, 84, 104),
+                CanyonSurface.HouseBlue => new Rgb(150, 186, 214),
+                CanyonSurface.HouseYellow => new Rgb(236, 206, 120),
+                CanyonSurface.Brick => new Rgb(168, 92, 70),
+                CanyonSurface.RoofDark => new Rgb(84, 92, 108),
+                CanyonSurface.Door => new Rgb(96, 64, 40),
+                CanyonSurface.Pavement => new Rgb(176, 172, 164),
+                CanyonSurface.Trunk => new Rgb(110, 76, 48),
+                CanyonSurface.Leaves => new Rgb(62, 128, 72),
+                CanyonSurface.FountainWater => new Rgb(70, 150, 214),
                 _ => new Rgb(200, 200, 205),
             };
-            if (snowy && facesUp && s != CanyonSurface.River && s != CanyonSurface.Window)
+            if (snowy && facesUp && s != CanyonSurface.River && s != CanyonSurface.FountainWater && s != CanyonSurface.Window)
                 return s == CanyonSurface.Road ? Rgb.Lerp(c, Snow, 0.6) : Snow;
             return c;
         }
@@ -100,8 +118,8 @@ namespace BridgeBuilder.Core
             return mesh;
         }
 
-        /// <summary>Holds the layout while the pieces are added.</summary>
-        sealed class Builder
+        /// <summary>Holds the layout while the pieces are added; CanyonTown adds the town through it.</summary>
+        internal sealed class Builder
         {
             readonly CanyonMesh _m;
             readonly CanyonLayout _c;
@@ -125,13 +143,17 @@ namespace BridgeBuilder.Core
                 Wall(_c.Span, _c.FarTop, +1);
                 Floor();
                 Skirt();
-                Town();
+                CanyonTown.Build(this, _c.FarTop - TopInset, _c.NearTop - TopInset);
             }
 
-            Vec3 P(double along, double across, double y) => _c.Point(along, across, y);
+            internal CanyonLayout Layout => _c;
+            internal double RoadHalfWidth => _road;
+            internal void SetFlagTop(Vec3 top) => _m.FlagTop = top;
+
+            internal Vec3 P(double along, double across, double y) => _c.Point(along, across, y);
 
             /// <summary>A flat-shaded triangle: its own three vertices, all with the face normal.</summary>
-            void Tri(Vec3 a, Vec3 b, Vec3 c, CanyonSurface s)
+            internal void Tri(Vec3 a, Vec3 b, Vec3 c, CanyonSurface s)
             {
                 Vec3 n = Vec3.Cross(b - a, c - a);
                 double len = n.Length;
@@ -152,7 +174,7 @@ namespace BridgeBuilder.Core
                 }
             }
 
-            void Quad(Vec3 a, Vec3 b, Vec3 c, Vec3 d, CanyonSurface s)
+            internal void Quad(Vec3 a, Vec3 b, Vec3 c, Vec3 d, CanyonSurface s)
             {
                 Tri(a, b, c, s);
                 Tri(a, c, d, s);
@@ -234,38 +256,8 @@ namespace BridgeBuilder.Core
                 Quad(P(_c.Span, -_w, _c.FloorY), P(_c.Span, _w, _c.FloorY), P(_c.Span, _w, _bottom), P(_c.Span, -_w, _bottom), CanyonSurface.Base);
             }
 
-            /// <summary>A few toy houses beside the road on the far clifftop, windows toward the bridge, and a flagpole.</summary>
-            void Town()
-            {
-                double y = _c.FarTop - TopInset, a = _c.Span;
-                House(a + 0.10, _road + 0.08, y, 0.10, 0.07);
-                House(a + 0.22, _road + 0.20, y, 0.08, 0.06);
-                House(a + 0.12, -_road - 0.12, y, 0.09, 0.08);
-                Vec3 foot = P(a + 0.05, -_road - 0.03, y);
-                Box(foot, 0.006, 0.006, 0.16, CanyonSurface.Pole);
-                _m.FlagTop = foot + Vec3.UnitY * 0.16;
-            }
-
-            void House(double along, double across, double y, double size, double wallHeight)
-            {
-                double h = size / 2;
-                Vec3 Pt(double da, double dc, double dy) => P(along + da, across + dc, y + dy);
-                // Walls and the flat top under the roof.
-                Box(Pt(0, 0, 0), size, size, wallHeight, CanyonSurface.House);
-                // A pitched roof running along the canyon (ridge parallel to Across).
-                double ridge = wallHeight + size * 0.4;
-                Quad(Pt(-h, -h, wallHeight), Pt(-h, h, wallHeight), Pt(0, h, ridge), Pt(0, -h, ridge), CanyonSurface.Roof);
-                Quad(Pt(h, -h, wallHeight), Pt(h, h, wallHeight), Pt(0, h, ridge), Pt(0, -h, ridge), CanyonSurface.Roof);
-                Tri(Pt(-h, -h, wallHeight), Pt(h, -h, wallHeight), Pt(0, -h, ridge), CanyonSurface.House);
-                Tri(Pt(-h, h, wallHeight), Pt(h, h, wallHeight), Pt(0, h, ridge), CanyonSurface.House);
-                // Two windows on the wall facing the bridge, just proud of it.
-                double face = -h - 0.001, w = size * 0.18, top = wallHeight * 0.75, bottom = wallHeight * 0.4;
-                foreach (double dc in new[] { -size * 0.25, size * 0.25 })
-                    Quad(Pt(face, dc - w / 2, bottom), Pt(face, dc + w / 2, bottom), Pt(face, dc + w / 2, top), Pt(face, dc - w / 2, top), CanyonSurface.Window);
-            }
-
             /// <summary>An upright box standing on `foot` (its bottom center), sides along the canyon frame.</summary>
-            void Box(Vec3 foot, double alongSize, double acrossSize, double height, CanyonSurface s)
+            internal void Box(Vec3 foot, double alongSize, double acrossSize, double height, CanyonSurface s)
             {
                 Vec3 fa = _c.Forward * (alongSize / 2), ac = _c.Across * (acrossSize / 2), up = Vec3.UnitY * height;
                 Vec3 b0 = foot - fa - ac, b1 = foot + fa - ac, b2 = foot + fa + ac, b3 = foot - fa + ac;
@@ -274,6 +266,17 @@ namespace BridgeBuilder.Core
                 Quad(b2, b3, b3 + up, b2 + up, s);
                 Quad(b3, b0, b0 + up, b3 + up, s);
                 Quad(b0 + up, b1 + up, b2 + up, b3 + up, s);
+            }
+
+            /// <summary>A four-sided pyramid on a base centered at `foot` (a spire, a tree's crown).</summary>
+            internal void Pyramid(Vec3 foot, double alongSize, double acrossSize, double height, CanyonSurface s)
+            {
+                Vec3 fa = _c.Forward * (alongSize / 2), ac = _c.Across * (acrossSize / 2), tip = foot + Vec3.UnitY * height;
+                Vec3 b0 = foot - fa - ac, b1 = foot + fa - ac, b2 = foot + fa + ac, b3 = foot - fa + ac;
+                Tri(b0, b1, tip, s);
+                Tri(b1, b2, tip, s);
+                Tri(b2, b3, tip, s);
+                Tri(b3, b0, tip, s);
             }
 
             /// <summary>A fixed pseudo-random number in [0, 1) per wall grid point.</summary>
