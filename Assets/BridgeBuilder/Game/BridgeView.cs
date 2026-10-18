@@ -38,7 +38,8 @@ namespace BridgeBuilder.Game
         static readonly int[] ColorIds = { Shader.PropertyToID("_WoodColor"), Shader.PropertyToID("_CableColor"), Shader.PropertyToID("_ConcreteColor") };
         static readonly Color[] FallbackColors = { new Color(0.62f, 0.45f, 0.28f), new Color(0.35f, 0.37f, 0.40f), new Color(0.70f, 0.70f, 0.68f) };
 
-        static readonly Vector4 Untextured = new Vector4(0f, 0f, -1f, 0f);
+        /// <summary>uv1 for a vertex drawn in plain vertex color: any other mesh using this shader must set it.</summary>
+        internal static readonly Vector4 Untextured = new Vector4(0f, 0f, -1f, 0f);
         static readonly Vector2[] Circle = UnitCircle(Sides);
         static readonly float[] CornerX = { 1f, -1f, -1f, 1f };
         static readonly float[] CornerY = { 1f, 1f, -1f, -1f };

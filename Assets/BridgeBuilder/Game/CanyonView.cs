@@ -52,6 +52,9 @@ namespace BridgeBuilder.Game
             _mesh.indexFormat = n > 65000 ? UnityEngine.Rendering.IndexFormat.UInt32 : UnityEngine.Rendering.IndexFormat.UInt16;
             _mesh.vertices = vertices;
             _mesh.normals = normals;
+            var untextured = new Vector4[n];
+            System.Array.Fill(untextured, BridgeView.Untextured);
+            _mesh.SetUVs(1, untextured);
             _mesh.SetTriangles(_canyon.Triangles, 0);
             _mesh.RecalculateBounds();
             _snowy = _lit = false;

@@ -18,6 +18,8 @@ namespace BridgeBuilder.Game
         [SerializeField] Color memberColor = new Color(0.85f, 0.88f, 0.95f);
         [SerializeField] Color padColor = new Color(0.95f, 0.6f, 0.2f);
         [SerializeField] Color groundColor = new Color(0.7f, 0.45f, 0.15f);
+        [Tooltip("The road ends (pads) on each clifftop.")]
+        [SerializeField] Color roadColor = new Color(0.25f, 0.25f, 0.28f);
         [Tooltip("How much the load color covers a member's material at no load; loadTintRise is added at full load.")]
         [Range(0f, 1f)] [SerializeField] float loadTint = 0.35f;
         [Range(0f, 1f)] [SerializeField] float loadTintRise = 0.45f;

@@ -330,7 +330,7 @@ namespace BridgeBuilder.Game
                 Stars = Stars,
                 MembersLost = _snapshot?.MembersLost ?? 0,
                 PeakUtilization = _snapshot?.PeakUtilization ?? 0,
-                MaterialSpent = _model.Spent,
+                MaterialSpent = TotalSpent(_runBridge),
                 Failures = _fx.Summary,
             });
         }
