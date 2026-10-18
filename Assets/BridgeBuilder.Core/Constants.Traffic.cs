@@ -26,6 +26,9 @@ namespace BridgeBuilder.Core
             /// <summary>In a jam, how long the full bridge must hold.</summary>
             public const double JamHoldSeconds = 5.0;
 
+            /// <summary>Share of a jam test's progress that filling the bridge takes; holding it full is the rest.</summary>
+            public const double JamFillShare = 0.5;
+
             /// <summary>A car moving slower than this counts as stopped in the jam.</summary>
             public const double StoppedSpeed = 0.3;
 

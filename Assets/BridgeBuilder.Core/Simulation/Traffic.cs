@@ -105,7 +105,7 @@ namespace BridgeBuilder.Core
         readonly bool[] _fell;             // per slot, already counted as fallen
         readonly int[] _quota, _spawned;   // per lane
         readonly List<int>[] _queue;       // per lane, slots ordered front to back (reused every step)
-        bool _lanesFull;                   // no lane can take another car (all spawned, or queued back to the entry)
+        bool _lanesFull;                   // no lane can take another car (all spawned, or queued from the deck back to the entry)
 
         public int Spawned { get; private set; }
         public int Crossed { get; private set; }
@@ -117,6 +117,36 @@ namespace BridgeBuilder.Core
         public bool Finished => _spec.Jam
             ? JamHeldSeconds >= Constants.Traffic.JamHoldSeconds
             : Crossed + Fell >= Quota;
+
+        /// <summary>
+        /// How far the traffic has got toward Finished, 0..1. Crossing: the cars across, plus each car still driving
+        /// by its share of its lane, over the quota. A jam: filling the bridge earns Constants.Traffic.JamFillShare
+        /// and holding it full the rest.
+        /// </summary>
+        public double Progress
+        {
+            get
+            {
+                if (Quota == 0)
+                    return 0;
+                if (_spec.Jam)
+                {
+                    double fill = JamHeldSeconds > 0 ? 1 : (double)Spawned / Quota;
+                    double hold = Math.Min(1, JamHeldSeconds / Constants.Traffic.JamHoldSeconds);
+                    return Constants.Traffic.JamFillShare * fill + (1 - Constants.Traffic.JamFillShare) * hold;
+                }
+                double through = Crossed;
+                for (int s = 0; s < _laneOf.Length; s++)
+                {
+                    int l = _laneOf[s];
+                    var car = l >= 0 ? _step.CarAt(s) : null;
+                    if (car == null || _fell[s] || _lanes[l].Exit <= 0)
+                        continue;
+                    through += Math.Clamp(_lanes[l].Progress(car.Position) / _lanes[l].Exit, 0, 1);
+                }
+                return Math.Min(1, through / Quota);
+            }
+        }
 
         /// <summary>The lane of the car in a slot, or -1.</summary>
         public int LaneOf(int slot) => _laneOf[slot];
@@ -167,9 +197,11 @@ namespace BridgeBuilder.Core
             {
                 var queue = _queue[l];
                 bool clear = queue.Count == 0 || Gap(l, queue[queue.Count - 1]) >= Constants.Traffic.MinGapMeters;
+                // A car just spawned at rest also blocks the entry; the lane is only backed up once its queue reaches the deck.
+                bool backedUp = !clear && _lanes[l].Progress(_step.CarAt(queue[0]).Position) + Constants.Car.Length / 2 >= _lanes[l].DeckStart;
                 if (_spawned[l] < _quota[l] && clear)
                     Spawn(l);
-                _lanesFull &= _spawned[l] >= _quota[l] || !clear;
+                _lanesFull &= _spawned[l] >= _quota[l] || backedUp;
             }
             Order();
             for (int l = 0; l < _lanes.Length; l++)
