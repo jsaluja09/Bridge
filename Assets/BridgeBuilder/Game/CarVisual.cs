@@ -65,6 +65,11 @@ namespace BridgeBuilder.Game
         /// <summary>Sets the body color; call before the car is first shown.</summary>
         public void Tint(Color body) => bodyColor = body;
 
+        CarStyle _style = CarStyle.Hatchback;
+
+        /// <summary>Sets the body style (physics is the same for every style); call before the car is first shown.</summary>
+        public void Style(CarStyle style) => _style = style;
+
         public void Hide()
         {
             if (_root != null)
@@ -103,7 +108,7 @@ namespace BridgeBuilder.Game
                 _wheelAnchor[w] = Local(SuspensionCar.WheelX(car, w), CarBlueprint.WheelRadius(car), SuspensionCar.WheelY(car, w));
             }
 
-            foreach (var part in CarBlueprint.Build(car, Constants.Car.Length))
+            foreach (var part in CarBlueprint.Build(car, Constants.Car.Length, _style))
             {
                 var go = GameObject.CreatePrimitive(part.Shape == CarPartShape.Wheel ? PrimitiveType.Cylinder : PrimitiveType.Cube);
                 go.name = part.Name;

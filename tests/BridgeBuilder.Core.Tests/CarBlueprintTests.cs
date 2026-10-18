@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using BridgeBuilder.Core;
 using Xunit;
@@ -86,6 +87,62 @@ namespace BridgeBuilder.Core.Tests
             var flat = Constants.Car.Standard(1000);
             flat.Track = 0;
             Assert.Throws<ArgumentOutOfRangeException>(() => CarBlueprint.Build(flat, Constants.Car.Length));
+        }
+    }
+
+    /// <summary>Body styles for traffic: each a believable car of its own, all on the same physics.</summary>
+    public class CarStyleTests
+    {
+        static readonly CarParameters Standard = Constants.Car.Standard(Constants.Human.CarMassKg);
+        static readonly double Length = Constants.Car.Length;
+
+        public static IEnumerable<object[]> Styles() => Enum.GetValues(typeof(CarStyle)).Cast<CarStyle>().Select(s => new object[] { s });
+
+        static List<CarPart> Build(CarStyle s) => CarBlueprint.Build(Standard, Length, s);
+
+        static double Roof(CarStyle s) => Build(s).Max(p => p.Up + p.SizeUp / 2);
+
+        [Theory]
+        [MemberData(nameof(Styles))]
+        public void EveryStyle_StaysInsideTheCarsOutline(CarStyle style)
+        {
+            double halfWidth = Standard.Track / 2 + CarBlueprint.WheelWidth(Standard);
+            foreach (var p in Build(style))
+            {
+                Assert.True(double.IsFinite(p.Along + p.Up + p.Across + p.SizeAlong + p.SizeUp + p.SizeAcross), p.Name);
+                Assert.True(p.SizeAlong > 0 && p.SizeUp > 0 && p.SizeAcross > 0, $"{style} {p.Name}");
+                Assert.True(Math.Abs(p.Along) + p.SizeAlong / 2 <= Length / 2 + 1e-9, $"{style} {p.Name}");
+                Assert.True(Math.Abs(p.Across) + p.SizeAcross / 2 <= halfWidth + 1e-9, $"{style} {p.Name}");
+                Assert.True(p.Up - p.SizeUp / 2 >= -1e-9, $"{style} {p.Name}");
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(Styles))]
+        public void EveryStyle_KeepsTheWheelsWhereThePhysicsHasThem(CarStyle style)
+        {
+            var wheels = Build(style).Where(p => p.Shape == CarPartShape.Wheel && p.Color == CarPartColor.Tire).OrderBy(p => p.Wheel).ToList();
+            var hatchback = Build(CarStyle.Hatchback).Where(p => p.Shape == CarPartShape.Wheel && p.Color == CarPartColor.Tire).OrderBy(p => p.Wheel).ToList();
+            Assert.Equal(hatchback.Select(w => (w.Along, w.Up, w.Across)), wheels.Select(w => (w.Along, w.Up, w.Across)));
+        }
+
+        [Fact]
+        public void TheDefaultIsTheOriginalHatchback() =>
+            Assert.Equal(CarBlueprint.Build(Standard, Length).Select(p => p.Name), Build(CarStyle.Hatchback).Select(p => p.Name));
+
+        [Fact]
+        public void StylesLookDifferent()
+        {
+            Assert.True(Roof(CarStyle.Van) > Roof(CarStyle.Hatchback) * 1.2, "the van stands tall");
+            Assert.True(Roof(CarStyle.SportsCar) < Roof(CarStyle.Sedan), "the sports car sits low");
+            var pickup = Build(CarStyle.Pickup).Select(p => p.Name).ToList();
+            Assert.Contains("Tailgate", pickup);
+            Assert.Contains("BedSideA", pickup);
+            Assert.DoesNotContain("Trunk", pickup);
+            Assert.Contains("Spoiler", Build(CarStyle.SportsCar).Select(p => p.Name));
+            var cabins = Enum.GetValues(typeof(CarStyle)).Cast<CarStyle>().Select(s => Build(s).Single(p => p.Name == "Cabin"))
+                             .Select(c => (c.Along, c.SizeAlong, c.SizeUp)).ToList();
+            Assert.Equal(cabins.Count, cabins.Distinct().Count());                    // every style shapes its cabin its own way
         }
     }
 }

@@ -6,7 +6,7 @@ namespace BridgeBuilder.Game
 {
     /// <summary>
     /// The game's handle on the cars. Drawing is CarVisual's job (W4-08); this keeps a pool of them, one per car
-    /// slot, built the first time a slot is used and reused after that, each in its own body color.
+    /// slot, built the first time a slot is used and reused after that, each in its own body color and style.
     /// </summary>
     public sealed class CarView : MonoBehaviour
     {
@@ -21,6 +21,12 @@ namespace BridgeBuilder.Game
             new Color(0.2f, 0.75f, 0.35f),
             new Color(0.9f, 0.9f, 0.92f),
             new Color(0.55f, 0.25f, 0.8f),
+        };
+
+        /// <summary>Five styles cycle against six colors, so no two of the traffic slots share both.</summary>
+        static readonly CarStyle[] Styles =
+        {
+            CarStyle.Hatchback, CarStyle.Sedan, CarStyle.Pickup, CarStyle.Van, CarStyle.SportsCar,
         };
 
         readonly List<CarVisual> _pool = new List<CarVisual>();
@@ -62,6 +68,7 @@ namespace BridgeBuilder.Game
                 var visual = go.AddComponent<CarVisual>();
                 visual.sourcedModelPrefab = carPrefab;
                 visual.Tint(BodyColors[_pool.Count % BodyColors.Length]);
+                visual.Style(Styles[_pool.Count % Styles.Length]);
                 _pool.Add(visual);
             }
             return _pool[slot];
