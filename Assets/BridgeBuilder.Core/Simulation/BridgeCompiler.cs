@@ -9,6 +9,7 @@ namespace BridgeBuilder.Core
         public int[] Triangles;
         public int[] TriangleEdges;
         public double Area;
+        public int SectionId;           // the deck's material
     }
 
     /// <summary>A bridge ready to simulate or draw: the solver input plus the decks and road check.</summary>
@@ -22,11 +23,15 @@ namespace BridgeBuilder.Core
         public Dictionary<int, int> NodeIndex = new Dictionary<int, int>();
 
         public double DeckArea => Decks.Sum(d => d.Area);
+
+        /// <summary>What the automatic decks cost: each deck's room area at its material's area price.</summary>
+        public double DeckCost(BudgetPolicy policy) => Decks.Sum(d => d.Area * policy.AreaCost(d.SectionId));
     }
 
     /// <summary>
-    /// Turns the player's model and its automatic decks (spec 11.3) into SolverInput: every member, the decks'
-    /// hidden braces (spec 2.4), and the decks as road fills. Room units in; the solver applies the scale.
+    /// Turns the player's model and its automatic decks (spec 11.3) into SolverInput: one section per material,
+    /// every member, the decks' hidden braces (spec 2.4) in the deck's material, and the decks as road fills.
+    /// Room units in; the solver applies the scale.
     /// </summary>
     public static class BridgeCompiler
     {
@@ -37,7 +42,7 @@ namespace BridgeBuilder.Core
         {
             var decks = AutoDeck.Find(model);
             var input = new SolverInput { ScaleFactor = scale };
-            input.Sections.Add(Constants.Section.Standard(0));
+            input.Sections.AddRange(Materials.Sections());
 
             var joined = new HashSet<(int, int)>();
             foreach (var m in model.Members)
@@ -52,7 +57,7 @@ namespace BridgeBuilder.Core
                 {
                     if (!joined.Add(Key(a, b)) || (model.GetNode(a).Fixed && model.GetNode(b).Fixed))
                         continue;
-                    input.Members.Add(new Member { Id = braceId++, NodeA = a, NodeB = b, SectionId = 0, HiddenBrace = true });
+                    input.Members.Add(new Member { Id = braceId++, NodeA = a, NodeB = b, SectionId = deck.SectionId, HiddenBrace = true });
                 }
             }
 
@@ -80,12 +85,13 @@ namespace BridgeBuilder.Core
             for (int i = 0; i < decks.Count; i++)
             {
                 var deck = decks[i];
-                input.Fills.Add(new Fill { Id = DeckFillIdBase + i, Loop = new List<int>(deck.Loop), Road = true, Valid = true });
+                input.Fills.Add(new Fill { Id = DeckFillIdBase + i, Loop = new List<int>(deck.Loop), Road = true, Valid = true, SectionId = deck.SectionId });
                 var g = new DeckGeometry
                 {
                     Triangles = deck.Triangles.Select(id => compiled.NodeIndex[id]).ToArray(),
                     TriangleEdges = new int[deck.Triangles.Count],
                     Area = deck.Area,
+                    SectionId = deck.SectionId,
                 };
                 for (int t = 0; t < deck.Triangles.Count; t += 3)
                 {

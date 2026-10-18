@@ -32,6 +32,7 @@ namespace BridgeBuilder.Core
         public List<int> Loop { get; set; } = new List<int>();
         public bool Road { get; set; }
         public bool Valid { get; set; } = true;
+        public int SectionId { get; set; }             // extension: the material the fill is priced and braced as
     }
 
     /// <summary>"A line is just a chain of members created together" (spec 3).</summary>
@@ -105,7 +106,9 @@ namespace BridgeBuilder.Core
         public double Iy { get; set; }
         public double Iz { get; set; }
         public double J { get; set; }
-        public double YieldStrength { get; set; }
+        public double YieldStrength { get; set; }      // bending, and axial where the two below are 0
+        public double TensionStrength { get; set; }    // extension: axial stress at failure in tension; 0 = YieldStrength
+        public double CompressionStrength { get; set; } // extension: axial stress at crushing; 0 = YieldStrength
         public double Density { get; set; }
         public double OuterFiberY { get; set; }        // extension: c for bending about local y
         public double OuterFiberZ { get; set; }        // extension: c for bending about local z

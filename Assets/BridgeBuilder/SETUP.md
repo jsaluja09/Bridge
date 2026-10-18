@@ -42,6 +42,25 @@ Keyboard over Link: Space = A, Backspace = B, Delete = grip, R = X, Y = Y, arrow
   and a CC0 creak loop on **Creak Clip**.
 - **Controller Pointer → Tip Offset** if the cursor dot isn't at the controller's tip.
 
+## Coach (optional)
+
+When a test's results appear, an online coach (Google's Gemini) can add a short explanation to the panel:
+why the bridge held or failed, and one thing to try next. Without it, the game works exactly the same,
+offline.
+
+1. Create an API key in Google AI Studio (https://aistudio.google.com/apikey).
+2. In Google Cloud console, restrict the key to the **Generative Language API** and set a usage cap
+   (a quota limit or a budget alert).
+3. Create the folder `Assets/BridgeBuilder/Coach/Resources/` and, in it, a text file `GeminiApiKey.txt` that
+   contains only the key. Check that Windows didn't name it `GeminiApiKey.txt.txt`. Git ignores this folder.
+   Never commit the key: the repo is public.
+4. Connect the headset to Wi-Fi.
+5. **File → Build And Run**, then unplug the headset and play.
+
+The key is built into the app, and anyone with the APK can extract it, so don't share the APK publicly.
+With no key file, the coach is off and shows nothing. With no network or on an error, the panel shows a small
+grey "Coach offline" line, and the usual failure message still appears.
+
 ## For developers
 
 The physics is the `BridgeBuilder.Core` library in `Assets/BridgeBuilder.Core` (no Unity code). It is built

@@ -15,7 +15,7 @@ namespace BridgeBuilder.Core.Tests
             input.Nodes.Add(new Node { Id = 0, Position = Vec3.Zero, Fixed = true });
             input.Nodes.Add(new Node { Id = 1, Position = free });
             input.Members.Add(new Member { Id = 7, NodeA = 0, NodeB = 1, SectionId = 0, LineId = 0 });
-            input.Sections.Add(Constants.Section.Standard(0));
+            input.Sections.Add(Constants.Wood.Section());
             return input;
         }
 
@@ -55,7 +55,7 @@ namespace BridgeBuilder.Core.Tests
             Assert.Equal(f.BucklingUtilization, f.Utilization, 9);
             Assert.Equal(0, f.TensionUtilization);
             Assert.Equal(0.5, f.FailurePoint);
-            double r = Math.Sqrt(Constants.Section.SecondMoment / Constants.Section.Area);
+            double r = Math.Sqrt(Constants.Wood.SecondMoment / Constants.Wood.Area);
             Assert.Equal(20 / r, f.Slenderness, 6);
             AssertFinite(f);
         }
@@ -63,10 +63,10 @@ namespace BridgeBuilder.Core.Tests
         [Fact]
         public void ShortTie_FailsAsTension()
         {
-            // 1 m bridge-world tie pulled at twice its yield force.
+            // 1 m bridge-world tie pulled at twice its breaking force.
             var input = TwoNodes(new Vec3(0.05, 0, 0), 20);
-            double yield = Constants.Section.YieldStrength * Constants.Section.Area;
-            var report = SolveAndReport(input, new[] { new NodalLoad(1, new Vec3(2 * yield, 0, 0)) }, 3);
+            double strength = Constants.Wood.TensionStrength * Constants.Wood.Area;
+            var report = SolveAndReport(input, new[] { new NodalLoad(1, new Vec3(2 * strength, 0, 0)) }, 3);
 
             var f = Assert.Single(report.Failures);
             Assert.Equal(FailureMode.Tension, f.Mode);
@@ -81,7 +81,7 @@ namespace BridgeBuilder.Core.Tests
         public void Fixture1_BareCantilever_FailsAsBendingAtTheSupport()
         {
             var file = FixtureLoader.Load("fixture-01-bare-cantilevers.json");
-            var input = file.ToInput(Constants.Section.Standard(0));
+            var input = file.ToInput(Constants.Wood.Section());
             using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(FixtureLoader.Directory, "fixture-01-bare-cantilevers.json")));
             var tips = json.RootElement.GetProperty("tips").EnumerateArray().Select(e => e.GetInt32()).ToArray();
 
@@ -120,14 +120,24 @@ namespace BridgeBuilder.Core.Tests
             var input = TwoNodes(new Vec3(0.05, 0, 0), 20);
             input.Nodes.Add(new Node { Id = 2, Position = new Vec3(0, 0.05, 0) });
             input.Members.Add(new Member { Id = 3, NodeA = 0, NodeB = 2, SectionId = 0, LineId = 1 });
-            double yield = Constants.Section.YieldStrength * Constants.Section.Area;
+            double strength = Constants.Wood.TensionStrength * Constants.Wood.Area;
             var report = SolveAndReport(input, new[]
             {
-                new NodalLoad(1, new Vec3(1.5 * yield, 0, 0)),
-                new NodalLoad(2, new Vec3(0, 3 * yield, 0)),
+                new NodalLoad(1, new Vec3(1.5 * strength, 0, 0)),
+                new NodalLoad(2, new Vec3(0, 3 * strength, 0)),
             }, 0);
 
             Assert.Equal(new[] { 3, 7 }, report.Failures.Select(f => f.MemberId));
+        }
+
+        [Fact]
+        public void TensionAndCompression_AreEachAgainstTheirOwnStrength()
+        {
+            var concrete = Constants.Concrete.Section();
+            double pull = Constants.Concrete.TensionStrength * Constants.Concrete.Area;
+            double push = Constants.Concrete.CompressionStrength * Constants.Concrete.Area;
+            Assert.Equal(1.0, FailureReport.Evaluate(new MemberForce { Axial = pull }, concrete, 1).TensionUtilization, 9);
+            Assert.Equal(1.0, FailureReport.Evaluate(new MemberForce { Axial = -push }, concrete, 1).CompressionUtilization, 9);
         }
 
         [Fact]
@@ -143,7 +153,7 @@ namespace BridgeBuilder.Core.Tests
         public void NaNForce_Throws()
         {
             var force = new MemberForce { Axial = double.NaN };
-            Assert.Throws<ArgumentOutOfRangeException>(() => FailureReport.Evaluate(force, Constants.Section.Standard(0), 1));
+            Assert.Throws<ArgumentOutOfRangeException>(() => FailureReport.Evaluate(force, Constants.Wood.Section(), 1));
         }
     }
 }

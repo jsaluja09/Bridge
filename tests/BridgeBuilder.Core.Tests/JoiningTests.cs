@@ -13,10 +13,7 @@ namespace BridgeBuilder.Core.Tests
         static LineVertex N(double x, double y, double z) => LineVertex.New(new Vec3(x, y, z));
         static Vec3 P(double x, double y, double z) => new Vec3(x, y, z);
 
-        static BridgeModel Model(int cap = 1000) => new BridgeModel(new BudgetPolicy
-        {
-            CostPerMeter = 1, CostPerSquareMeter = 1, MaterialBudget = 1000, NodeCap = cap,
-        });
+        static BridgeModel Model(int cap = 1000) => new BridgeModel(BudgetPolicy.Uniform(1, 1, 1000, cap));
 
         /// <summary>A 1 m beam along x from a support, as one line with one member.</summary>
         static BridgeModel Beam(out int line, out Member member, int cap = 1000)

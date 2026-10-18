@@ -1,0 +1,17 @@
+{
+    "name": "BridgeBuilder.Coach",
+    "rootNamespace": "BridgeBuilder.Coach",
+    "references": [
+        "BridgeBuilder.Core",
+        "BridgeBuilder.Game"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

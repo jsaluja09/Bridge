@@ -13,13 +13,15 @@ namespace BridgeBuilder.Core
         public List<int> Triangles = new List<int>();
         public List<(int a, int b)> Braces = new List<(int, int)>();
         public double Area;
+        public int SectionId;           // the deck's material (Materials.DeckMaterial), for its price and braces
     }
 
     /// <summary>
     /// Automatic decks (spec 11.3). Two lines that are each flat (every piece within the road slope limit),
     /// run roughly parallel, and sit side by side at a drivable spacing get a deck between them over the
     /// stretch where they overlap. The strip is zipped together with the shorter diagonal at each step, so
-    /// the hidden bracing is a zigzag of short braces. Decks are derived from the lines, never stored.
+    /// the hidden bracing is a zigzag of short braces. The deck's material comes from its two lines
+    /// (Materials.DeckMaterial). Decks are derived from the lines, never stored.
     /// </summary>
     public static class AutoDeck
     {
@@ -84,8 +86,10 @@ namespace BridgeBuilder.Core
                         continue;
 
                     var deck = Zip(a, b, a.Direction, maxSlopeDeg);
-                    if (deck != null)
-                        decks.Add(deck);
+                    if (deck == null)
+                        continue;
+                    deck.SectionId = (int)Materials.DeckMaterial(model, deck);
+                    decks.Add(deck);
                 }
             }
             return decks;

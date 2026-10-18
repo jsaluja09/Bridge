@@ -81,9 +81,9 @@ namespace BridgeBuilder.Game
         static readonly string ResultsKeys = HudCard.Key("A", "Back to building");
 
         static string BuildKeys(string mirror) =>
-            HudCard.Key("Trigger", "Hold to draw") + "   " + HudCard.Key("Grip", "On a line: delete") + "   " +
-            HudCard.Key("A", "Test") + "   " + HudCard.Key("B", "Undo") + "   " + HudCard.Key("X", "Clear") + "   " +
-            HudCard.Key("Y", mirror);
+            HudCard.Key("Trigger", "Hold to draw") + "   " + HudCard.Key("Stick", "Material") + "   " +
+            HudCard.Key("Grip", "On a line: delete") + "   " + HudCard.Key("A", "Test") + "   " + HudCard.Key("B", "Undo") + "   " +
+            HudCard.Key("X", "Clear") + "   " + HudCard.Key("Y", mirror);
 
         string _briefBody;
 
@@ -92,7 +92,7 @@ namespace BridgeBuilder.Game
             Kind = HudCardKind.Intro,
             Header = TestCount,
             Title = _level.Name,
-            Body = _briefBody ??= $"{_level.Brief}\nMaterial {_level.Budget:F0} m\n<size=80%>{PhaseNames}</size>",
+            Body = _briefBody ??= $"{_level.Brief}\nBudget ${_level.Budget:F0}\n<size=80%>{PhaseNames}</size>",
             Controls = StartKeys,
         };
 
@@ -113,7 +113,8 @@ namespace BridgeBuilder.Game
 
         HudCardContent BuildCard()
         {
-            string material = $"Material {_model.Spent:F1} / {_level.Budget:F0} m";
+            string material = $"{Materials.Name(_material)}  ${Materials.CostPerMeter(_material):F0}/m   ·   " +
+                              $"Spent ${TotalSpent(_bridge):F0} / ${_level.Budget:F0}";
             string road = _bridge.Road.Ok ? "<color=#5CE65C>Road ready</color>" : "Road: draw two flat lines side by side, pad to pad";
             string best = _bestStars > 0 ? $"   ·   <color=#FFD24A>Best: {_bestStars} of {TestPhases.MaxStars} stars</color>" : "";
             string body = $"{material}   ·   {road}{best}";
@@ -180,14 +181,26 @@ namespace BridgeBuilder.Game
             return snap.Result == RunResult.Passed ? "Across" : "Crossing";
         }
 
-        HudCardContent ResultsCard() => new HudCardContent
+        string _resultsBody, _resultsBodyText, _resultsBodyNote;   // the results card's body, and what it was built from
+
+        /// <summary>The results, with the optional ResultNote (the coach's explanation) under them.</summary>
+        HudCardContent ResultsCard()
         {
-            Kind = HudCardKind.Results,
-            Header = _testHeader,
-            Title = _resultsTitle,
-            Body = _resultsText,
-            Controls = ResultsKeys,
-        };
+            if (!ReferenceEquals(_resultsBodyText, _resultsText) || _resultsBodyNote != ResultNote)
+            {
+                _resultsBodyText = _resultsText;
+                _resultsBodyNote = ResultNote;
+                _resultsBody = string.IsNullOrEmpty(ResultNote) ? _resultsText : $"{_resultsText}\n{ResultNote}";
+            }
+            return new HudCardContent
+            {
+                Kind = HudCardKind.Results,
+                Header = _testHeader,
+                Title = _resultsTitle,
+                Body = _resultsBody,
+                Controls = ResultsKeys,
+            };
+        }
 
         /// <summary>
         /// Built once when the results appear (the stars are drawn above the card): each phase's verdict, why the

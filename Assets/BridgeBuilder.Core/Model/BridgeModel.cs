@@ -22,21 +22,47 @@ namespace BridgeBuilder.Core
         NodeCap,
     }
 
-    /// <summary>The three budget numbers and the hidden node cap (spec 2.9).</summary>
+    /// <summary>Prices per material, the material budget and the hidden node cap (spec 2.9).</summary>
     public sealed class BudgetPolicy
     {
-        public double CostPerMeter { get; set; }
-        public double CostPerSquareMeter { get; set; }
+        public double[] CostPerMeter { get; set; }          // indexed by section id
+        public double[] CostPerSquareMeter { get; set; }    // indexed by section id (fills and decks)
         public double MaterialBudget { get; set; }
         public int NodeCap { get; set; }
 
-        public static BudgetPolicy Default => new BudgetPolicy
+        /// <summary>Price of one room meter of line in this section.</summary>
+        public double LineCost(int sectionId) => Price(CostPerMeter, sectionId);
+
+        /// <summary>Price of one room square meter of fill or deck in this section.</summary>
+        public double AreaCost(int sectionId) => Price(CostPerSquareMeter, sectionId);
+
+        /// <summary>True when both a line and a fill in this section have a price.</summary>
+        internal bool Prices(int sectionId) => Has(CostPerMeter, sectionId) && Has(CostPerSquareMeter, sectionId);
+
+        public static BudgetPolicy Default => ForMaterials(Constants.Budget.MaterialBudget, Constants.Human.NodeCap);
+
+        /// <summary>The game's prices: each material's line and deck price (Materials).</summary>
+        public static BudgetPolicy ForMaterials(double budget, int nodeCap) => new BudgetPolicy
         {
-            CostPerMeter = Constants.Budget.CostPerMeter,
-            CostPerSquareMeter = Constants.Budget.CostPerSquareMeter,
-            MaterialBudget = Constants.Budget.MaterialBudget,
-            NodeCap = Constants.Human.NodeCap,
+            CostPerMeter = Array.ConvertAll(Materials.All, Materials.CostPerMeter),
+            CostPerSquareMeter = Array.ConvertAll(Materials.All, Materials.DeckCostPerSquareMeter),
+            MaterialBudget = budget,
+            NodeCap = nodeCap,
         };
+
+        /// <summary>The same price for every material, for tests that are not about materials.</summary>
+        public static BudgetPolicy Uniform(double perMeter, double perSquareMeter, double budget, int nodeCap) => new BudgetPolicy
+        {
+            CostPerMeter = Array.ConvertAll(Materials.All, _ => perMeter),
+            CostPerSquareMeter = Array.ConvertAll(Materials.All, _ => perSquareMeter),
+            MaterialBudget = budget,
+            NodeCap = nodeCap,
+        };
+
+        static bool Has(double[] prices, int sectionId) => prices != null && sectionId >= 0 && sectionId < prices.Length;
+
+        static double Price(double[] prices, int sectionId) =>
+            Has(prices, sectionId) ? prices[sectionId] : throw new ArgumentOutOfRangeException(nameof(sectionId), sectionId, "No price for this section");
     }
 
     /// <summary>A line vertex: an existing node, a new point in room units, or a new point on an existing member.</summary>
@@ -75,8 +101,9 @@ namespace BridgeBuilder.Core
 
     /// <summary>
     /// The player's bridge (spec 2.3, 2.4, 2.9, 2.11): nodes, members, lines and fills with budget, hidden node
-    /// cap, one undo stack and delete rules. Every successful mutation pushes one snapshot. A line that joins
-    /// another between its nodes splits that member (spec 11.5); tests run on Copy().
+    /// cap, one undo stack and delete rules. A line or fill is priced by its section (material); deleting it
+    /// refunds that same price. Every successful mutation pushes one snapshot. A line that joins another between
+    /// its nodes splits that member (spec 11.5); tests run on Copy().
     /// </summary>
     public sealed class BridgeModel
     {
@@ -96,7 +123,7 @@ namespace BridgeBuilder.Core
                 Nodes = Nodes.Select(n => new Node { Id = n.Id, Position = n.Position, Fixed = n.Fixed, SurfaceId = n.SurfaceId, GroundAnchor = n.GroundAnchor }).ToList(),
                 Members = Members.Select(m => new Member { Id = m.Id, NodeA = m.NodeA, NodeB = m.NodeB, SectionId = m.SectionId, LineId = m.LineId, HiddenBrace = m.HiddenBrace }).ToList(),
                 Lines = Lines.Select(l => new Line { Id = l.Id, Members = new List<int>(l.Members) }).ToList(),
-                Fills = Fills.Select(f => new Fill { Id = f.Id, Loop = new List<int>(f.Loop), Road = f.Road, Valid = f.Valid }).ToList(),
+                Fills = Fills.Select(f => new Fill { Id = f.Id, Loop = new List<int>(f.Loop), Road = f.Road, Valid = f.Valid, SectionId = f.SectionId }).ToList(),
                 Creator = new Dictionary<int, int>(Creator),
                 SplitNodes = new HashSet<int>(SplitNodes),
                 Spent = Spent,
@@ -148,6 +175,13 @@ namespace BridgeBuilder.Core
             return nodes;
         }
 
+        /// <summary>The section id (material) of a line's members, or -1 if there is no such line.</summary>
+        public int LineSection(int lineId)
+        {
+            var line = GetLine(lineId);
+            return line == null || line.Members.Count == 0 ? -1 : GetMember(line.Members[0]).SectionId;
+        }
+
         public double LineLength(int lineId)
         {
             var nodes = LineNodes(lineId);
@@ -185,8 +219,9 @@ namespace BridgeBuilder.Core
         }
 
         /// <summary>
-        /// A line through the given vertices; the first must be an existing node or a point on an existing
-        /// member (spec 2.3). Points on members split them, in the same edit (spec 11.5).
+        /// A line through the given vertices in one section (material), charged by length at that section's
+        /// price; the first must be an existing node or a point on an existing member (spec 2.3). Points on members
+        /// split them, in the same edit (spec 11.5). A section with no price is an invalid line.
         /// </summary>
         public EditResult TryAddLine(IReadOnlyList<LineVertex> vertices, int sectionId = 0) => AddLine(vertices, sectionId, false);
 
@@ -207,7 +242,7 @@ namespace BridgeBuilder.Core
 
         EditResult AddLine(IReadOnlyList<LineVertex> vertices, int sectionId, bool freeStart)
         {
-            if (vertices == null || vertices.Count < 2)
+            if (vertices == null || vertices.Count < 2 || !Policy.Prices(sectionId))
                 return EditResult.Fail(EditReason.InvalidLine);
             if (!vertices[0].IsExisting && !vertices[0].IsOnMember && !freeStart)
                 return EditResult.Fail(EditReason.MissingStartNode);
@@ -269,7 +304,7 @@ namespace BridgeBuilder.Core
             double length = 0;
             for (int i = 1; i < points.Count; i++)
                 length += Vec3.Distance(points[i - 1], points[i]);
-            double cost = length * Policy.CostPerMeter;
+            double cost = length * Policy.LineCost(sectionId);
             if (_s.Nodes.Count + newNodes > Policy.NodeCap)
                 return EditResult.Fail(EditReason.BudgetExceeded, BudgetCause.NodeCap);
             if (_s.Spent + cost > Policy.MaterialBudget + 1e-9)
@@ -432,16 +467,21 @@ namespace BridgeBuilder.Core
             return EditResult.Success(m.Id);
         }
 
-        /// <summary>A fill over a loop of existing nodes, charged by area (spec 2.9). Planarity is checked elsewhere.</summary>
-        public EditResult TryAddFill(IReadOnlyList<int> loop, bool road)
+        /// <summary>
+        /// A fill over a loop of existing nodes in one section (material), charged by area at that section's price
+        /// (spec 2.9). A section with no price is invalid. Planarity is checked elsewhere.
+        /// </summary>
+        public EditResult TryAddFill(IReadOnlyList<int> loop, bool road, int sectionId = 0)
         {
             if (loop == null || loop.Count < 3 || loop.Any(id => GetNode(id) == null))
                 return EditResult.Fail(EditReason.UnknownNode);
-            double cost = NewellArea(loop.Select(id => GetNode(id).Position).ToList()) * Policy.CostPerSquareMeter;
+            if (!Policy.Prices(sectionId))
+                return EditResult.Fail(EditReason.InvalidLine);
+            double cost = NewellArea(loop.Select(id => GetNode(id).Position).ToList()) * Policy.AreaCost(sectionId);
             if (_s.Spent + cost > Policy.MaterialBudget + 1e-9)
                 return EditResult.Fail(EditReason.BudgetExceeded, BudgetCause.MaterialBudget);
             Push();
-            var fill = new Fill { Id = _s.NextId++, Loop = new List<int>(loop), Road = road, Valid = true };
+            var fill = new Fill { Id = _s.NextId++, Loop = new List<int>(loop), Road = road, Valid = true, SectionId = sectionId };
             _s.Fills.Add(fill);
             _s.Spent += cost;
             return EditResult.Success(fill.Id);
@@ -478,10 +518,10 @@ namespace BridgeBuilder.Core
                     continue;
                 fill.Valid = false;
                 fill.Road = false;
-                _s.Spent -= FillArea(fill) * Policy.CostPerSquareMeter;
+                _s.Spent -= FillArea(fill) * Policy.AreaCost(fill.SectionId);
                 result.InvalidatedFillIds.Add(fill.Id);
             }
-            _s.Spent -= LineLength(lineId) * Policy.CostPerMeter;
+            _s.Spent -= LineLength(lineId) * Policy.LineCost(LineSection(lineId));
             _s.Members.RemoveAll(m => m.LineId == lineId);
             _s.Members.RemoveAll(m => m.HiddenBrace && (created.Contains(m.NodeA) || created.Contains(m.NodeB)));
             _s.Nodes.RemoveAll(n => created.Contains(n.Id));
@@ -518,7 +558,7 @@ namespace BridgeBuilder.Core
                 return EditResult.Fail(EditReason.UnknownId);
             Push();
             if (fill.Valid)
-                _s.Spent = Math.Max(0, _s.Spent - FillArea(fill) * Policy.CostPerSquareMeter);
+                _s.Spent = Math.Max(0, _s.Spent - FillArea(fill) * Policy.AreaCost(fill.SectionId));
             _s.Fills.Remove(fill);
             return EditResult.Success(fillId);
         }

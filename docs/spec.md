@@ -11,7 +11,7 @@ A mixed-reality physics game for Quest 2 (Unity, Meta XR SDK). The player marks 
 - A middle schooler can draw almost any connected shape and see why it holds or fails.
 - Bare spans fail. Supports, triangulation, and fills visibly matter.
 
-**Non-goals for the MVP:** multiple materials, per-line thickness, plastic yielding, multiplayer, saving across sessions, anything beyond a single car per run.
+**Non-goals for the MVP:** per-line thickness, plastic yielding, multiplayer, saving across sessions, anything beyond a single car per run. *(Changed: multiple materials are no longer a non-goal; see 11.8.)*
 
 **Constraint on assets.** All 3D models and other assets (the car, props, markers) come from free online libraries, with each asset's license checked and recorded. No agent or AI tool generates models for this project. If a needed asset has no free source, it becomes an open question instead of being generated. Bridge members and fills are the exception in kind: the game builds their meshes at runtime from the solver's geometry, so they are not sourced assets.
 
@@ -65,7 +65,7 @@ A mixed-reality physics game for Quest 2 (Unity, Meta XR SDK). The player marks 
 ### 2.7 Structural model
 
 - **Rigid-jointed frame elements** (members resist bending, not just axial force). Almost any connected drawing stands up, and triangles still make a bridge measurably stronger.
-- **One fixed cross-section** for every member in the MVP. The data model carries a per-member section value from day one, set to the same constant, so per-line thickness is an easy first upgrade.
+- **One fixed cross-section** for every member in the MVP. The data model carries a per-member section value from day one, set to the same constant, so per-line thickness is an easy first upgrade. *(Changed: each material now has its own section; see 11.8.)*
 - **Failure modes:** tension (yield), compression, and **buckling** (Euler-style, so long slender members under compression fail early). The check is one closed-form capacity test per member, combined with bending.
 - When a member fails it is removed, the structure redistributes load, and the solver continues. This gives progressive collapse.
 - Plastic yielding and progressive damage are a later layer. The solver stays linear between failures, so this means adding state to members and not rewriting the core.
@@ -79,13 +79,13 @@ A mixed-reality physics game for Quest 2 (Unity, Meta XR SDK). The player marks 
 
 ### 2.9 Game rules
 
-- **Material budget:** every line and fill costs by length or area. One material in the MVP. A hidden hard node cap protects performance and is enforced through the budget so the player never sees a separate rule.
+- **Material budget:** every line and fill costs by length or area. One material in the MVP. *(Changed: three materials, each with its own price; see 11.8.)* A hidden hard node cap protects performance and is enforced through the budget so the player never sees a separate rule.
 - **Challenges are authored and shown before building**, like a design brief: for example, heavy truck, crosswind 15 m/s, budget 500. In the MVP each is a small config object (car weight, wind speed, grip, budget). Free play with player-chosen conditions comes later.
 - **Scoring:** the run passes if the car reaches the far surface, even if some members broke. A star rating comes from members lost, peak utilization, and budget remaining. The first build can be pass or fail plus members lost.
 
 ### 2.10 Feedback
 
-- **Utilization coloring** is the default. Each member is colored by how close it is to failing, taking the worst of its tension, compression, and buckling checks (green, yellow, red).
+- **Utilization coloring** is the default. Each member is colored by how close it is to failing, taking the worst of its tension, compression, and buckling checks (green, yellow, red). *(Changed: the color is now tinted over the material texture; see 11.8.)*
 - A joint takes the color of the worst attached member. A fill takes its color from its bracing and surrounding frame.
 - The solver also outputs signed member force, so a tension and compression view can be added later with no new physics.
 - **Second cue for accessibility** (details deferred): wide, low-frequency stripes that get denser as utilization rises, a pulse on members past about 90% utilization, and a creak that rises in pitch as the worst member nears failure. A member also visibly bows as it approaches its buckling load.
@@ -112,7 +112,7 @@ The solver and game layer are separated by a **plain C# assembly with no Unity d
 **Inputs to the solver:**
 
 - Nodes: id, position (room units), whether fixed (support).
-- Members: id, two node ids, section value (a constant in the MVP).
+- Members: id, two node ids, section value (a constant in the MVP). *(Changed: the section value now names the member's material, and fills carry one for their deck material; see 11.8.)*
 - Fills: a loop of node ids, plus a road flag.
 - Run configuration: car parameters, start surface, condition (wind, grip, car weight), scale factor.
 
@@ -144,11 +144,11 @@ The solver and game layer are separated by a **plain C# assembly with no Unity d
 
 These are shared by both tracks and live as JSON bridges.
 
-1. **Two bare cantilevers must fail.** Two lines from the surfaces with nothing else must fail under the standard car. Tune values until this holds. It also catches any later change that makes bridges too strong.
+1. **Two bare cantilevers must fail.** Two lines from the surfaces with nothing else must fail under the standard car. Tune values until this holds. It also catches any later change that makes bridges too strong. *(Changed: it must fail in every material; see 11.8.)*
 2. **Simply supported beam:** deflection and member force match hand-calculated values.
 3. **Unbraced rectangle:** under load it behaves as a flexible frame, not a mechanism, because joints are rigid. The same rectangle with a diagonal is measurably stiffer.
 4. **Long vs short compression member:** the long one buckles first, at the expected load.
-5. **Triangulated truss:** holds the standard car with a visible margin.
+5. **Triangulated truss:** holds the standard car with a visible margin. *(Changed: when built in wood; see 11.8.)*
 6. **Progressive failure:** removing a member redistributes load, and the solver does not blow up or produce NaN.
 7. **Pier to ground plane:** a fixed pier carries load until it buckles.
 
@@ -195,14 +195,15 @@ None of these values comes from a measurement or a source. Treat each as a hypot
 | ~20 degree maximum road slope | 2.4 | Rule of thumb for drivability | Playtest with the car model. Replace it with what the suspension actually handles. |
 | ~300 ms preview debounce | 2.10 | Guess at "the player has paused" | Playtest. Shorten if the preview feels laggy, lengthen if it distracts. |
 | ~90% pulse threshold | 2.10 | Guess at "about to fail" | Compare against the utilization at which members actually fail in test runs. |
-| Section size and material strength | 2.7 | Not chosen yet | Calibrate until the two-cantilever fixture fails and a triangulated truss passes (section 5). |
-| Budget values and star thresholds | 2.9 | Not chosen yet | Set after slice 2 from measured bridge costs. |
+| Section size and material strength | 2.7, 11.8 | Starting guesses for each material (wood, steel cable, concrete): its own section, stiffness, weight, and separate tension and compression strengths | Calibrate until the two-cantilever fixture fails in every material and the triangulated truss holds when built in wood, by the human-set margins (section 5 and 11.8). |
+| Budget values and star thresholds | 2.9, 11.8 | Line prices are set by the human: wood 10, steel cable 25, concrete 50 per room meter. Deck prices and the level budget are starting guesses. Star thresholds are not chosen yet. | Set deck prices, the level budget, and star thresholds from measured bridge costs, keeping the balance rule in 11.8. |
 
 Decisions can be challenged as well as numbers. If a choice in section 2 (for example fixed supports, one cross-section, or lagged two-way coupling) turns out to be wrong in the headset, change it and note why.
 
 ## 9. Later upgrades
 
-- Per-line thickness and multiple materials.
+- Per-line thickness. (Multiple materials are done; see 11.8.)
+- Cables that go slack when pushed and take load again when pulled, instead of snapping.
 - Plastic yielding and progressive damage.
 - Tension and compression color view.
 - Pinned supports as a challenge option.
@@ -232,7 +233,7 @@ Setup is two taps: one per end of the bridge. Each tap places a flat rectangular
 
 ### 11.3 Automatic decks
 
-There is no fill or road tool. Two lines that are each flat (under the road slope limit), run roughly parallel, and sit side by side at a drivable spacing get a deck between them automatically. The deck is a road fill with hidden bracing, costs material by area, and is validated as in 2.4.
+There is no fill or road tool. Two lines that are each flat (under the road slope limit), run roughly parallel, and sit side by side at a drivable spacing get a deck between them automatically. The deck is a road fill with hidden bracing, costs material by area, and is validated as in 2.4. *(Changed: deck material and price; see 11.8.)*
 
 ### 11.4 Delete
 
@@ -249,3 +250,33 @@ Lines drawn to a dot that other lines already share sometimes failed to join it,
 ### 11.6 Matching sides
 
 From the Group A drawing issues (W4-01 to W4-04). A line, arc, or polyline (a triangle, zigzag or W) shaped as in 11.1 and drawn beside a matching line at a drivable spacing snaps to an exact copy of that line shifted sideways, so the two sides of a bridge match. A line within a small angle of an existing rail becomes that rail shifted sideways, so the pair always gets a deck. An arc becomes a side-by-side arch or a concentric curve. A polyline must have the same number of corners, each close to the other side's, and is built one straight side at a time so its corners are shared dots. Smooth curves such as an S are not copied. While the trigger is held, a ghost shows what the stroke will build and highlights the line it copies.
+
+### 11.7 Coach (optional, online)
+
+When a test's results appear, the headset can send a short text description of the test to Google's Gemini over Wi-Fi: the level, which phases held, the last phase's car, wind, grip, result, stars, pieces broken, highest load, and material, plus the game's own failure message and tip. A plain-language explanation for a middle schooler, saying why the bridge held or failed and one thing to try next, then appears on the results panel. The prompt holds only game numbers and level text, never student data. The coach is its own assembly that installs itself and only listens to the game, so the game does not reference it. The API key ships inside the app from a local file that is never committed. The game works fully offline without the coach. With no key, the coach is off and shows nothing. With no network, a timeout, or an error, the results panel shows a small "Coach offline" line and is otherwise unchanged, including the failure message. The model, thinking level, reply length (about 40 words), and timeout (about 15 s) are tuning constants.
+
+### 11.8 Materials
+
+Decided with the project owner on 2026-10-18. This replaces the one fixed cross-section of 2.7 and the one material of 2.9. There are three materials: wood, steel cable, and concrete. The steel tube used until now is removed from the game and from Core's sections. Its steel values stay, unused, in the human-owned constants until a human removes them.
+
+Each material has its own cross-section, stiffness, and weight in the solver, and separate strengths in tension and in compression. The member check in 2.7 still covers tension, compression, buckling, and bending, but it compares pull against the tension strength and push against the compression strength.
+
+- **Wood** is light, moderately strong both pulled and pushed, and bends easily.
+- **Steel cable** is very strong when pulled and has almost no bending strength. A cable that is pushed fails: it snaps and is removed like any other broken member. Cables do not go slack and tighten again; that is a possible later upgrade (section 9).
+- **Concrete** is very strong when squeezed, weak when pulled, and very heavy.
+
+The section values are starting guesses. They live in the constants files and are tuned against the calibration fixtures below.
+
+**Prices.** A line costs a fixed price per room meter of its material. The project owner chose the prices: wood 10, steel cable 25, concrete 50. Deleting a line refunds its own price.
+
+**Decks.** An automatic deck (11.3) takes the material of the two lines it sits between. A deck between two cable lines is wood planks, like a rope bridge. A deck between two different materials uses the more expensive of the two. The deck's hidden bracing is built in the deck's material, and so are the cross beams added when two rails are paired into one road (W4-03). Decks cost a price per room square meter of their material; the starting guesses are wood 40 and concrete 200, and the values live in the constants files. The game now charges automatic decks against the budget: a stroke is refused if its lines plus the decks they create would go over it.
+
+**Budget and balance.** The game has one level, and its budget is rescaled to the new prices: ten times the old budget, which was counted in room meters of line, so 120 (`Constants.Phases.LevelBudget`, a starting guess). Tests lock in a balance rule against that budget. A wood truss (wood rails, top chord, end posts, and verticals) with steel cable on its outer diagonals, which only ever pull, fits the budget with its deck and carries the car with nothing lost. With every diagonal in cable it still fits, but the center diagonals are pushed and snap, though the car still crosses. The same truss built entirely in concrete costs more than the budget.
+
+**Calibration.** Fixtures 1 and 5 (section 5) keep their human-set margins but get new targets. Fixture 1, the bare cantilevers, must fail in each material, with a worst-member utilization of at least the human minimum (`Fixture1MinimumUtilization`). Fixture 5, the truss, must hold when built in wood, staying below the human maximum (`Fixture5MaximumUtilization`).
+
+**Picking a material.** While building, a flick of the right thumbstick to the right or left cycles to the next or previous material, starting from wood; over Link the arrow keys do the same. Each line, and its mirror copy, is built in the material selected when it is drawn. The HUD shows the current material, its price, and the spending so far, including decks.
+
+**Looks.** Each material has its own member shape, built at runtime from the solver geometry like every member (section 1): a square wood beam, a thin round cable, and a thick square concrete beam, each with a texture. Until the load preview is ready, members show the plain material. Then the load color from 2.10 (green, yellow, red) is tinted over the texture, more strongly as the load rises, and the stripe cue stays. If the textures are missing, members fall back to flat colors per material.
+
+**Textures and licensing.** The textures are three CC0 color maps from ambientCG (Wood 049, Rope 002, and Concrete 034, at 1K). They sit in `Assets/BridgeBuilder/Game/Resources/MaterialTextures/`, with a `LICENSES.md` there that records each source and license. The project owner approved downloading them as an exception to the agent rule against downloading binary assets. They meet the asset constraint in section 1: each comes from a free library, with its license checked and recorded.
