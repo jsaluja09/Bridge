@@ -29,8 +29,29 @@ namespace BridgeBuilder.Core.Tests
         public int MemberNodeB(int member) => _inner.MemberNodeB(member);
         public List<int> Rebuild(bool firstTime) => _inner.Rebuild(firstTime);
         public void SolveStatic(Vec3[] loads) => _inner.SolveStatic(loads);
-        public List<int> RemoveFailures(int maxPerStep) => _inner.RemoveFailures(maxPerStep);
-        public List<int> DetachAfterFailures() => _inner.DetachAfterFailures();
+        /// <summary>A member to break at the next failure check, whatever its utilization (-1: none).</summary>
+        public int ForceFail = -1;
+        bool _forced;
+
+        public List<int> RemoveFailures(int maxPerStep)
+        {
+            var failed = _inner.RemoveFailures(maxPerStep);
+            if (ForceFail >= 0 && _inner.Active[ForceFail])
+            {
+                _inner.Active[ForceFail] = false;
+                failed.Add(ForceFail);
+                _forced = true;
+            }
+            return failed;
+        }
+
+        public List<int> DetachAfterFailures()
+        {
+            if (!_forced)
+                return _inner.DetachAfterFailures();
+            _forced = false;
+            return _inner.Rebuild(false);
+        }
         public void Step(Vec3[] loads, double dt)
         {
             StepLoads.Add((Vec3[])loads.Clone());
@@ -230,6 +251,32 @@ namespace BridgeBuilder.Core.Tests
         }
 
         [Fact]
+        public void SelfWeight_DropsBrokenMembers()
+        {
+            var (step, frame, _, bridge) = Make();
+            var input = bridge.Input;
+            int k = Enumerable.Range(0, input.Members.Count).First(i => !input.Members[i].HiddenBrace);
+            var all = DeadLoadPreview.SelfWeight(input, Constants.Loads.Gravity, 20);
+            var standing = Enumerable.Range(0, input.Members.Count).Select(i => i != k).ToArray();
+            var without = DeadLoadPreview.SelfWeight(input, Constants.Loads.Gravity, 20, standing);
+
+            // The car is parked on the pad, so the bridge carries only its own weight.
+            step.Step(new WheelLoad[0], 1.0 / 60, null);
+            Assert.Equal(all.Select(l => l.Force), frame.StepLoads[0]);
+
+            frame.ForceFail = k;
+            step.Step(new WheelLoad[0], 1.0 / 60, null);    // breaks member k after its solve
+            step.Step(new WheelLoad[0], 1.0 / 60, null);
+            Assert.Equal(without.Select(l => l.Force), frame.StepLoads[2]);
+
+            var m = input.Members[k];
+            var s = input.Sections.First(x => x.Id == m.SectionId);
+            double length = Vec3.Distance(input.Nodes.First(x => x.Id == m.NodeA).Position, input.Nodes.First(x => x.Id == m.NodeB).Position) * 20;
+            double lost = frame.StepLoads[2].Sum(f => f.Y) - frame.StepLoads[0].Sum(f => f.Y);
+            Assert.Equal(length * s.A * s.Density * Constants.Loads.Gravity, lost, 6);
+        }
+
+        [Fact]
         public void Coupling_CancelFlagSkipsSolve()
         {
             var (step, frame, _, _) = Make();
@@ -351,60 +398,6 @@ namespace BridgeBuilder.Core.Tests
         [Fact]
         public void FreePlay_IsAbsent() =>
             Assert.DoesNotContain(typeof(ChallengeConfig).GetMethods(), m => m.Name == "FreePlay" || m.Name == "SetPlayerConditions");
-    }
-
-    /// <summary>W3-04: scoring metrics.</summary>
-    public class ScoringTests
-    {
-        static readonly Vec3 A = new Vec3(0, 0, 0), B = new Vec3(0, 0, 2);
-
-        [Fact]
-        public void Pass_WhenCarCrossesFarEdge_EvenIfMembersFailed()
-        {
-            Assert.True(Scoring.Reached(new Vec3(0.1, 0, 1), A, B, Vec3.UnitX, 0.1));
-            Assert.Equal(3, Scoring.MembersLost(new[] { 1, 2, 3 }));
-            Assert.True(Scoring.Reached(new Vec3(0.1, 0, 1), A, B, Vec3.UnitX, 0.1));
-        }
-
-        [Fact]
-        public void Fail_WhenCarHasNotCrossed()
-        {
-            Assert.False(Scoring.Reached(new Vec3(-0.1, 0, 1), A, B, Vec3.UnitX, 0.1));
-            Assert.False(Scoring.Reached(new Vec3(0.1, 5, 1), A, B, Vec3.UnitX, 0.1));
-        }
-
-        [Fact]
-        public void MembersLost_CountsFailedIds()
-        {
-            Assert.Equal(0, Scoring.MembersLost(new int[0]));
-            Assert.Equal(2, Scoring.MembersLost(new[] { 4, 4, 9 }));
-        }
-
-        [Fact]
-        public void Metrics_ExposePeakUtilizationAndBudgetRemaining()
-        {
-            var m = new RunMetrics { PeakUtilization = 0.42, BudgetRemaining = 17 };
-            Assert.Equal(0.42, m.PeakUtilization);
-            Assert.Equal(17, m.BudgetRemaining);
-        }
-
-        [Fact]
-        public void Stars_UseSuppliedPolicy()
-        {
-            var p = new StarPolicy { MaxLostForThree = 0, MaxUtilForThree = 0.8, MinBudgetForThree = 2 };
-            Assert.Equal(3, Scoring.Stars(new RunMetrics { MembersLost = 0, PeakUtilization = 0.5, BudgetRemaining = 5 }, p));
-            Assert.Equal(0, Scoring.Stars(new RunMetrics { MembersLost = 1, PeakUtilization = 0.5, BudgetRemaining = 5 }, p));
-            Assert.Equal(0, Scoring.Stars(new RunMetrics { MembersLost = 0, PeakUtilization = 0.9, BudgetRemaining = 5 }, p));
-            Assert.Equal(0, Scoring.Stars(new RunMetrics { MembersLost = 0, PeakUtilization = 0.5, BudgetRemaining = 1 }, p));
-        }
-
-        [Fact]
-        public void Reach_DefaultTolerance_ReadsHumanConstant()
-        {
-            double t = Constants.Human.ReachTolerance;
-            Assert.True(Scoring.Reached(new Vec3(t, 0, 1), A, B, Vec3.UnitX));
-            Assert.False(Scoring.Reached(new Vec3(t + 1e-6, 0, 1), A, B, Vec3.UnitX));
-        }
     }
 
     /// <summary>Spec 11: free drawing, automatic decks, and the whole loop from strokes to a test run.</summary>

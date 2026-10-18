@@ -94,10 +94,8 @@ namespace BridgeBuilder.Core
             double floor = (configuration.GroundHeightOverride ?? FloorRoomHeight ?? LowestPad() - 1) * _scale;
             _debris = new DebrisWorld(_frame, _pads, _scale, floor, _gravity);
 
-            var weight = DeadLoadPreview.SelfWeight(input, _gravity, _scale);
             _static = new Vec3[n];
-            for (int i = 0; i < n; i++)
-                _static[i] = weight[i].Force + (ExtraStaticLoads != null ? ExtraStaticLoads[i] : Vec3.Zero);
+            UpdateStaticLoads();
             _loads = new Vec3[n];
 
             // Start from equilibrium under self-weight: whatever can't carry itself breaks before the car moves.
@@ -110,6 +108,7 @@ namespace BridgeBuilder.Core
                     break;
                 InitialFailures.AddRange(failed);
                 _debris.Add(_frame.DetachAfterFailures());
+                UpdateStaticLoads();
             }
             Positions = new Vec3[n];
             UpdatePositions();
@@ -147,7 +146,10 @@ namespace BridgeBuilder.Core
             _frame.Step(_loads, dt);
             var failed = _frame.RemoveFailures(Constants.Dynamics.MaxFailuresPerStep);
             if (failed.Count > 0)
+            {
                 _debris.Add(_frame.DetachAfterFailures());
+                UpdateStaticLoads();
+            }
             _debris.Step(dt);
             UpdatePositions();
 
@@ -164,6 +166,17 @@ namespace BridgeBuilder.Core
                 output.FailedMemberIds.Add(_input.Members[k].Id);
             _last = output;
             return output;
+        }
+
+        /// <summary>
+        /// Self-weight of the members still standing, plus the extra loads (bridge-core DynamicSelfWeight): a broken
+        /// member stops loading the nodes it hung from instead of leaving its weight on the bridge.
+        /// </summary>
+        void UpdateStaticLoads()
+        {
+            var weight = DeadLoadPreview.SelfWeight(_input, _gravity, _scale, _frame.Active);
+            for (int i = 0; i < _static.Length; i++)
+                _static[i] = weight[i].Force + (ExtraStaticLoads != null ? ExtraStaticLoads[i] : Vec3.Zero);
         }
 
         void Load(int node, Vec3 force)

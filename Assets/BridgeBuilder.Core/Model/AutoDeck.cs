@@ -38,9 +38,27 @@ namespace BridgeBuilder.Core
 
         public static List<Deck> Find(BridgeModel model, double maxSlopeDeg, double minSpacing, double maxSpacing, double maxAngleDeg)
         {
+            var linesAt = new Dictionary<int, HashSet<int>>();
+            foreach (var m in model.Members)
+            {
+                if (m.LineId < 0)
+                    continue;
+                foreach (int node in new[] { m.NodeA, m.NodeB })
+                {
+                    if (!linesAt.TryGetValue(node, out var set))
+                        linesAt[node] = set = new HashSet<int>();
+                    set.Add(m.LineId);
+                }
+            }
+            bool OnOtherLine(int node, int line) => linesAt.TryGetValue(node, out var set) && set.Any(l => l != line);
+
             var runs = new List<Run>();
             foreach (var line in model.Lines)
             {
+                // A rung (W4-03 cross beam): two dots, both on other lines. It ties a deck together; it never edges one.
+                var ends = model.LineNodes(line.Id);
+                if (ends.Count == 2 && OnOtherLine(ends[0], line.Id) && OnOtherLine(ends[1], line.Id))
+                    continue;
                 var run = FlatRun(model, line.Id, maxSlopeDeg);
                 if (run != null)
                     runs.Add(run);

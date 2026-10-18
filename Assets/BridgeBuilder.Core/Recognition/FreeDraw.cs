@@ -36,10 +36,12 @@ namespace BridgeBuilder.Core
 
     /// <summary>
     /// Free drawing (spec 11.1, 11.5): a held-trigger stroke anywhere in space becomes a line. The stroke is
-    /// smoothed, straightened when the recognizer reads it as a line, fused with every existing dot or line it
-    /// starts at, ends at or passes near (a line is split where it is joined between its dots), and divided into
-    /// equal ~10 cm segments. Ends touching a pad top or a floor dot become new supports. Returns one or more
-    /// vertex chains (a chain breaks where it would retrace an existing member).
+    /// smoothed and given a clean shape: straight when it barely bows, a circular arc through its ends when it
+    /// follows a circle, straight sides between sharp corners, or else the smoothed curve; squiggles are rejected.
+    /// The shape is fused with every existing dot or line it starts at, ends at or passes near (a line is split
+    /// where it is joined between its dots), and divided into equal ~10 cm segments. Ends touching a pad top or a
+    /// floor dot become new supports. Returns one or more vertex chains (a chain breaks where it would retrace an
+    /// existing member).
     /// </summary>
     public static class FreeDraw
     {
@@ -100,29 +102,38 @@ namespace BridgeBuilder.Core
             }
         }
 
-        public static List<List<DrawVertex>> Build(IReadOnlyList<Vec3> raw, Context ctx, out StrokeKind kind)
+        const double SampleMeters = 0.01;        // resampling step before smoothing
+        const double ArcSampleMeters = 0.002;    // spacing of the dense points that trace a clean arc
+
+        public static List<List<DrawVertex>> Build(IReadOnlyList<Vec3> raw, Context ctx, out StrokeKind kind) =>
+            Build(raw, ctx, out kind, out _);
+
+        /// <summary>
+        /// As above. When no chain comes back, <paramref name="reason"/> says why: Degenerate for a stroke too short
+        /// to place, Unrecognized for a squiggle (kind is then Rejected).
+        /// </summary>
+        public static List<List<DrawVertex>> Build(IReadOnlyList<Vec3> raw, Context ctx, out StrokeKind kind, out RejectionReason reason)
         {
             kind = StrokeKind.Rejected;
+            reason = RejectionReason.Degenerate;
             var chains = new List<List<DrawVertex>>();
             if (raw == null || raw.Count < 2)
                 return chains;
 
-            var path = Smooth(Geometry.Resample(raw, 0.01), Constants.Draw.SmoothingWindow);
+            var path = Smooth(Geometry.Resample(raw, SampleMeters), Constants.Draw.SmoothingWindow);
             if (Geometry.PathLength(path) < Constants.Draw.MinLineMeters)
                 return chains;
 
             var scene = new Scene(ctx);
             var start = Snap(path[0], scene, null);
             var end = Snap(path[path.Count - 1], scene, start);
-            path[0] = start.Position;
-            path[path.Count - 1] = end.Position;
-
-            var recognition = new StrokeRecognizer().Recognize(path, new[] { path[0] });
-            kind = recognition.Kind;
-            if (kind == StrokeKind.Line)
-                path = new List<Vec3> { start.Position, end.Position };
-            else if (kind == StrokeKind.Polyline)
-                path = recognition.Corners.ToList();
+            path = Shape(path, start.Position, end.Position, out kind);
+            if (path == null)
+            {
+                reason = RejectionReason.Unrecognized;
+                return chains;
+            }
+            reason = RejectionReason.None;
 
             // Existing dots and lines the stroke passes near become joints along it (sorted by distance along the
             // path), except near an end the stroke shares with a line it is only leaving (spec 11.5).
@@ -158,7 +169,21 @@ namespace BridgeBuilder.Core
                     stops.RemoveAt(i);
             }
 
-            // Equal segments between consecutive stops, following the (smoothed) path.
+            // The corners of a zigzag or triangle are joints too, unless a joint already sits that close.
+            if (kind == StrokeKind.Polyline)
+            {
+                double at = 0;
+                for (int i = 1; i + 1 < path.Count; i++)
+                {
+                    at += Vec3.Distance(path[i - 1], path[i]);
+                    double s = at;
+                    if (stops.All(x => Math.Abs(x.s - s) >= ctx.Spacing * 0.5))
+                        stops.Add((s, new DrawVertex(-1, path[i])));
+                }
+                stops.Sort((x, y) => x.s.CompareTo(y.s));
+            }
+
+            // Equal segments between consecutive stops, following the shape.
             var chain = new List<DrawVertex> { stops[0].v };
             for (int k = 0; k + 1 < stops.Count; k++)
             {
@@ -372,6 +397,237 @@ namespace BridgeBuilder.Core
             if (unsigned)
                 cos = Math.Abs(cos);
             return Math.Acos(Math.Clamp(cos, -1, 1)) * 180 / Math.PI;
+        }
+
+        /// <summary>
+        /// The shape the smoothed path is drawn as (spec 11.1), from snapped end p to snapped end q: straight sides
+        /// between sharp corners where they were drawn (Polyline, the ends and corners), unless a circle fits the
+        /// stroke more closely; else, with the snap shift spread along the path, its two ends when it bows less than
+        /// StraightBowFraction of its span (Line); a clean circular arc through its ends, densely sampled (Arc); or
+        /// the path itself for any other smooth curve (Curve). Null for a squiggle.
+        /// </summary>
+        static List<Vec3> Shape(List<Vec3> path, Vec3 p, Vec3 q, out StrokeKind kind)
+        {
+            var corners = Corners(path, out double sideFit);
+            path = Warp(path, p, q);
+            Vec3 a = path[0], b = path[path.Count - 1];
+            double span = Vec3.Distance(a, b), bow = Bow(path, 0, path.Count - 1, a, b);
+            var arc = Arc(path, span, bow, out double arcFit);
+            if (corners != null && (arc == null || sideFit <= arcFit))
+            {
+                corners[0] = p;
+                corners[corners.Count - 1] = q;
+                kind = StrokeKind.Polyline;
+                return corners;
+            }
+            if (span > 0 && bow <= Constants.Draw.StraightBowFraction * span)
+            {
+                kind = StrokeKind.Line;
+                return new List<Vec3> { a, b };
+            }
+            if (arc != null)
+            {
+                kind = StrokeKind.Arc;
+                return arc;
+            }
+            Bends(path, out double turned, out int reversals);
+            if (reversals > Constants.Draw.MaxBendReversals || turned > Constants.Draw.MaxTurnDegrees)
+            {
+                kind = StrokeKind.Rejected;
+                return null;
+            }
+            kind = StrokeKind.Curve;
+            return path;
+        }
+
+        /// <summary>Moves the path's ends onto p and q, spreading the shift along its length so it keeps its shape.</summary>
+        static List<Vec3> Warp(List<Vec3> path, Vec3 p, Vec3 q)
+        {
+            Vec3 dp = p - path[0], dq = q - path[path.Count - 1];
+            double total = Geometry.PathLength(path), run = 0;
+            var result = new List<Vec3>(path.Count);
+            for (int i = 0; i < path.Count; i++)
+            {
+                if (i > 0)
+                    run += Vec3.Distance(path[i - 1], path[i]);
+                double t = total > 0 ? run / total : 0;
+                result.Add(path[i] + dp * (1 - t) + dq * t);
+            }
+            result[0] = p;
+            result[result.Count - 1] = q;
+            return result;
+        }
+
+        /// <summary>The largest distance of path[from..to] from the segment ab.</summary>
+        static double Bow(List<Vec3> path, int from, int to, Vec3 a, Vec3 b)
+        {
+            double max = 0;
+            for (int i = from; i <= to; i++)
+                max = Math.Max(max, Geometry.DistanceToSegment(path[i], a, b));
+            return max;
+        }
+
+        /// <summary>
+        /// The ends and corners of a zigzag, triangle or W: each turn of at least CornerAngleDegrees between straight
+        /// runs just beyond the smoothing, complete within those runs (one arm farther out it has grown by less than
+        /// CornerSpreadDegrees, unlike a smooth bend), when every side between corners (away from their rounding)
+        /// bows less than SideBowFraction of its length. Null when the stroke has no such corner. fit is the path's
+        /// largest distance from the sides, rounded corners included.
+        /// </summary>
+        static List<Vec3> Corners(List<Vec3> path, out double fit)
+        {
+            fit = 0;
+            int skip = Constants.Draw.SmoothingWindow;
+            int arm = Math.Max(1, (int)Math.Round(Constants.Draw.CornerArmMeters / SampleMeters));
+            int reach = skip + arm, count = path.Count;
+            var turn = new double[count];
+            for (int i = reach; i + reach < count; i++)
+            {
+                double inner = AngleDegrees(path[i - skip] - path[i - reach], path[i + reach] - path[i + skip], false);
+                double outer = AngleDegrees(path[i - reach] - path[Math.Max(0, i - reach - arm)], path[Math.Min(count - 1, i + reach + arm)] - path[i + reach], false);
+                if (outer - inner < Constants.Draw.CornerSpreadDegrees)
+                    turn[i] = inner;
+            }
+
+            var picks = new List<int> { 0 };
+            for (int i = reach; i + reach < count; i++)
+            {
+                if (turn[i] < Constants.Draw.CornerAngleDegrees)
+                    continue;
+                bool peak = true;
+                for (int j = i - reach; j <= i + reach && peak; j++)
+                    peak = turn[j] < turn[i] || (turn[j] == turn[i] && j >= i);
+                if (peak)
+                    picks.Add(i);
+            }
+            if (picks.Count < 2)
+                return null;
+            picks.Add(count - 1);
+
+            var corners = new List<Vec3> { path[0] };
+            for (int c = 1; c + 1 < picks.Count; c++)
+                corners.Add(Corner(path, picks[c], skip, reach));
+            corners.Add(path[count - 1]);
+            for (int c = 0; c + 1 < picks.Count; c++)
+            {
+                int from = c == 0 ? 0 : picks[c] + skip, to = c + 2 == picks.Count ? count - 1 : picks[c + 1] - skip;
+                double side = Vec3.Distance(corners[c], corners[c + 1]);
+                if (!(side > 0) || Bow(path, from, to, corners[c], corners[c + 1]) > Constants.Draw.SideBowFraction * side)
+                    return null;
+                fit = Math.Max(fit, Bow(path, picks[c], picks[c + 1], corners[c], corners[c + 1]));
+            }
+            return corners;
+        }
+
+        /// <summary>Where the straight runs into and out of the corner at sample i meet, undoing the smoothing's rounding.</summary>
+        static Vec3 Corner(List<Vec3> path, int i, int skip, int reach)
+        {
+            Vec3 p = path[i - skip], d = (path[i - skip] - path[i - reach]).Normalized();
+            Vec3 q = path[i + skip], e = (path[i + reach] - path[i + skip]).Normalized();
+            Vec3 w = p - q;
+            double c = Vec3.Dot(d, e), det = 1 - c * c;
+            if (det < 1e-3)
+                return path[i];
+            double s = (c * Vec3.Dot(w, e) - Vec3.Dot(w, d)) / det, t = (Vec3.Dot(w, e) - c * Vec3.Dot(w, d)) / det;
+            Vec3 corner = (p + d * s + q + e * t) * 0.5;
+            return Vec3.Distance(corner, path[i]) <= reach * SampleMeters ? corner : path[i];
+        }
+
+        /// <summary>
+        /// A clean circular arc through the path's ends, bulging the same way and about as far as the drawing, densely
+        /// sampled so equal division puts every joint on the circle. Null unless the path stays within ArcFitFraction
+        /// of its size (span or bow, whichever is larger) of that circle; fit is its largest distance from the circle.
+        /// </summary>
+        static List<Vec3> Arc(List<Vec3> path, double span, double bow, out double fit)
+        {
+            fit = double.MaxValue;
+            if (span < Constants.Draw.MinLineMeters)
+                return null;
+            Vec3 a = path[0], b = path[path.Count - 1], mid = (a + b) * 0.5, x = (b - a) / span;
+            Vec3 side = Vec3.Zero;
+            foreach (var p in path)
+                side += p - mid - x * Vec3.Dot(p - mid, x);
+            if (side.Length < 1e-9)
+                return null;
+            Vec3 y = side.Normalized(), normal = Vec3.Cross(x, y);
+
+            // The circle through both ends has its centre on their bisector at height k; x² + (y - k)² = (span/2)² + k²
+            // is linear in k, so the algebraic least-squares fit is closed form.
+            double half = span / 2, num = 0, den = 0;
+            foreach (var p in path)
+            {
+                double px = Vec3.Dot(p - mid, x), py = Vec3.Dot(p - mid, y);
+                num += py * (px * px + py * py - half * half);
+                den += 2 * py * py;
+            }
+            if (den < 1e-12)
+                return null;
+            double k = num / den, r = Math.Sqrt(half * half + k * k);
+            Vec3 center = mid + y * k;
+
+            fit = 0;
+            foreach (var p in path)
+            {
+                Vec3 d = p - center;
+                double off = Vec3.Dot(d, normal), radial = (d - normal * off).Length - r;
+                fit = Math.Max(fit, Math.Sqrt(radial * radial + off * off));
+            }
+            if (fit > Constants.Draw.ArcFitFraction * Math.Max(span, bow))
+                return null;
+
+            double halfSweep = Math.Acos(Math.Clamp(-k / r, -1, 1));
+            int n = Math.Max(2, (int)Math.Ceiling(2 * halfSweep * r / ArcSampleMeters));
+            var arc = new List<Vec3>(n + 1) { a };
+            for (int i = 1; i < n; i++)
+            {
+                double t = halfSweep * (2.0 * i / n - 1);
+                arc.Add(center + x * (r * Math.Sin(t)) + y * (r * Math.Cos(t)));
+            }
+            arc.Add(b);
+            return arc;
+        }
+
+        /// <summary>
+        /// How far a curve bends in all, in degrees, and how often it changes bend direction. The running turn is
+        /// followed with hysteresis, so wobble under BendLobeMinDegrees neither counts as a bend nor adds to the total.
+        /// </summary>
+        static void Bends(List<Vec3> path, out double turned, out int reversals)
+        {
+            Geometry.FitPlane(path, out _, out Vec3 normal, out _);
+            double min = Constants.Draw.BendLobeMinDegrees, theta = 0, high = 0, low = 0, from = 0;
+            int dir = 0;
+            turned = 0;
+            reversals = 0;
+            for (int i = 1; i + 1 < path.Count; i++)
+            {
+                Vec3 u = path[i] - path[i - 1], v = path[i + 1] - path[i];
+                theta += Math.Atan2(Vec3.Dot(Vec3.Cross(u, v), normal), Vec3.Dot(u, v)) * 180 / Math.PI;
+                high = Math.Max(high, theta);
+                low = Math.Min(low, theta);
+                if (dir <= 0 && theta - low >= min)
+                {
+                    if (dir < 0)
+                    {
+                        reversals++;
+                        turned += from - low;
+                    }
+                    from = low;
+                    high = theta;
+                    dir = 1;
+                }
+                else if (dir >= 0 && high - theta >= min)
+                {
+                    if (dir > 0)
+                    {
+                        reversals++;
+                        turned += high - from;
+                    }
+                    from = high;
+                    low = theta;
+                    dir = -1;
+                }
+            }
+            turned += dir > 0 ? high - from : dir < 0 ? from - low : 0;
         }
 
         static List<Vec3> Smooth(List<Vec3> pts, int window)

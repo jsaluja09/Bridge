@@ -107,8 +107,32 @@ namespace BridgeBuilder.Core.Tests
             Assert.Equal(spent, m.Spent);
         }
 
-        [Fact(Skip = "Waits on HG-bracing: a human writes the quad and n-gon node pairs into issue W2-04.")]
-        public void Bracing_MatchesAppendedPattern() { }
+        /// <summary>Loop vertices at a deck height from (x, z) pairs.</summary>
+        static List<Vec3> Level(params double[] xz) =>
+            Enumerable.Range(0, xz.Length / 2).Select(k => new Vec3(xz[2 * k], 1.0, xz[2 * k + 1])).ToList();
+
+        static void AssertPattern(List<Vec3> loop, params (int, int)[] expected)
+        {
+            var braces = FillBracing.Plan(Enumerable.Range(0, loop.Count).ToList(), loop);
+            Assert.Equal(expected.OrderBy(p => p).ToList(), braces.OrderBy(p => p).ToList());
+        }
+
+        [Fact]
+        public void Bracing_MatchesAppendedPattern()
+        {
+            Assert.Equal("shortest-diagonal-triangulation-v1", Constants.Bracing.PatternId);
+            AssertPattern(Level(0, 0, 0.5, 0, 0.5, 0.25, 0, 0.25), (0, 2));                                         // HG-bracing quad
+            AssertPattern(Level(0, 0, 0.25, 0, 0.5, 0, 0.5, 0.25, 0.25, 0.25, 0, 0.25), (1, 4), (0, 4), (1, 3));   // two-panel deck strip
+            AssertPattern(Level(0, 0, 0.5, 0, 0.5, 0.25, 0.25, 0.25, 0.25, 0.5, 0, 0.5), (0, 3), (1, 3), (3, 5)); // non-convex L
+            AssertPattern(Level(0, 0, 0.5, 0, 0, 0.25));                                                            // triangle: none
+        }
+
+        [Fact]
+        public void Bracing_SelfIntersectingLoop_Throws()
+        {
+            var crossed = Level(0, 0, 0.5, 0, 0, 0.25, 0.25, 0.25);
+            Assert.Throws<InvalidOperationException>(() => FillBracing.Plan(Enumerable.Range(0, 4).ToList(), crossed));
+        }
     }
 
     /// <summary>W2-05: road-chain validation.</summary>

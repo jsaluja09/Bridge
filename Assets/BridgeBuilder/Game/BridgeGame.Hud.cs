@@ -22,8 +22,6 @@ namespace BridgeBuilder.Game
         TextMeshPro _hud;
         AudioSource _sfx;
         AudioSource _creak;
-        string _flash;
-        float _flashUntil;
 
         void CreateFeedback()
         {
@@ -40,11 +38,7 @@ namespace BridgeBuilder.Game
             _creak.volume = 0f;
         }
 
-        void Flash(string message)
-        {
-            _flash = message;
-            _flashUntil = Time.time + 2.5f;
-        }
+        void Flash(string message) => HudMessages.Show(message, 2.5f);
 
         void Play(AudioClip clip)
         {
@@ -67,8 +61,9 @@ namespace BridgeBuilder.Game
                 Phase.Build => BuildText(),
                 _ => TestText(),
             };
-            if (Time.time < _flashUntil)
-                text = $"<color=#FFD24A>{_flash}</color>\n{text}";
+            string message = HudMessages.Current;
+            if (message != null)
+                text = $"<color=#FFD24A>{message}</color>\n{text}";
             if (_worker.Error != null)
                 text += $"\n<color=#FF5050>Simulation error: {_worker.Error}</color>";
             _hud.text = text;
@@ -108,14 +103,16 @@ namespace BridgeBuilder.Game
             var snap = _snapshot;
             if (snap == null)
                 return "Starting...";
+            // Failure messages arrive through HudMessages while testing (W4-07).
             if (snap.Result == RunResult.Running)
-                return $"Testing...   worst load {Mathf.RoundToInt((float)snap.WorstUtilization * 100)}%" +
-                       (snap.Lesson.Length > 0 ? $"\n<color=#FFD24A>{snap.Lesson}</color>" : "") + SolverStats();
+                return $"Testing...   worst load {Mathf.RoundToInt((float)snap.WorstUtilization * 100)}%" + SolverStats();
 
             bool pass = snap.Result == RunResult.Passed;
             string verdict = pass ? "<color=#5CE65C>PASS</color>" : "<color=#FF5050>FAIL</color>";
-            string stars = pass && _stars == 3 ? "  <color=#FFD24A>3 stars!</color>" : "";
-            string lesson = snap.Lesson.Length > 0 ? $"\n<color=#FFD24A>{snap.Lesson}</color>" : "";
+            string stars = pass && _stars > 0 ? $"  <color=#FFD24A>{_stars} of 3 stars{(_stars == 3 ? "!" : "")}</color>" : "";
+            // Keep the summary on the result panel once the HUD message has gone.
+            var summary = _fx.Summary;
+            string lesson = summary != null && HudMessages.Current != summary.Text ? $"\n<color=#FFD24A>{summary.Text}</color>" : "";
             return $"{verdict}{stars}  {snap.Message}{lesson}\n" +
                    $"Members broken: {snap.MembersLost}   ·   Highest load: {Mathf.RoundToInt((float)snap.PeakUtilization * 100)}%\n" +
                    "<size=70%>A: back to building</size>" + SolverStats();

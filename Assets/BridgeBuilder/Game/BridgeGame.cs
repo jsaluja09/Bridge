@@ -29,6 +29,8 @@ namespace BridgeBuilder.Game
         CarView _car;
         SimWorker _worker;
         PreviewScheduler _scheduler;
+        FailureFx _fx;
+        readonly List<FailureReport> _newFailures = new List<FailureReport>();
 
         readonly ChallengeConfig[] _challenges = ChallengeConfig.Defaults();
         int _challengeIndex;
@@ -59,6 +61,9 @@ namespace BridgeBuilder.Game
             _pointer = GetComponent<ControllerPointer>();
             _view = GetComponent<BridgeView>();
             _car = GetComponent<CarView>();
+            _fx = GetComponent<FailureFx>();
+            if (_fx == null)
+                _fx = gameObject.AddComponent<FailureFx>();
             CreateFeedback();
             _worker = new SimWorker();
             _scheduler = new PreviewScheduler(new UnityClock(), () =>
@@ -199,6 +204,7 @@ namespace BridgeBuilder.Game
             _runBridge = BridgeCompiler.Compile(_model.Copy(), _pads, Scale);
             var config = Challenge.ToRunConfiguration(_start, _pads[_start.Start].Across, Scale);
             _worker.StartRun(_runBridge, config, _floor);
+            _fx.Begin(_runBridge, _floor);
             _snapshot = null;
             _lastLost = 0;
             _shownResult = RunResult.Running;
@@ -212,6 +218,9 @@ namespace BridgeBuilder.Game
         {
             var latest = _worker.Latest();
             _snapshot = latest.Bridge == _runBridge ? latest : null;
+            _newFailures.Clear();
+            _worker.TakeFailures(_runBridge, _newFailures);
+            _fx.Advance(_snapshot, _newFailures);
 
             if (_snapshot != null)
             {
@@ -223,13 +232,10 @@ namespace BridgeBuilder.Game
                 if (_snapshot.Result != _shownResult)
                 {
                     _shownResult = _snapshot.Result;
-                    var metrics = new RunMetrics
-                    {
-                        MembersLost = _snapshot.MembersLost,
-                        PeakUtilization = _snapshot.PeakUtilization,
-                        BudgetRemaining = _model.Remaining,
-                    };
-                    _stars = _shownResult == RunResult.Passed ? Scoring.Stars(metrics, StarPolicy) : 0;
+                    // The snapshot carries only the count of lost members, so stand-in ids give that count.
+                    var metrics = new RunMetrics(_shownResult == RunResult.Passed, Enumerable.Range(0, _snapshot.MembersLost),
+                                                 _snapshot.PeakUtilization, _model.Remaining);
+                    _stars = Scoring.Stars(metrics, StarPolicy);
                     Play(_shownResult == RunResult.Passed ? passClip : failClip);
                 }
             }
@@ -239,12 +245,17 @@ namespace BridgeBuilder.Game
             {
                 _worker.StopRun();
                 _car.Hide();
+                _fx.Clear();
+                HudMessages.Clear();
                 _snapshot = null;
                 _phase = Phase.Build;
             }
         }
 
-        /// <summary>Three-star thresholds. HG-stars has not set them, so these are the game's GUESS.</summary>
-        StarPolicy StarPolicy => new StarPolicy { MaxLostForThree = 0, MaxUtilForThree = 0.8, MinBudgetForThree = Challenge.Budget * 0.25 };
+        /// <summary>
+        /// Star thresholds (pass with any losses past MaxLostForTwo is 1 star, otherwise 2, and 3 with margin and
+        /// budget to spare). HG-stars has not set them, so these are the game's GUESS.
+        /// </summary>
+        StarPolicy StarPolicy => new StarPolicy(maxLostForTwo: 0, maxUtilForThree: 0.8, minBudgetForThree: Challenge.Budget * 0.25);
     }
 }

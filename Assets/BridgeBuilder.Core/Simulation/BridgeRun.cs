@@ -134,11 +134,10 @@ namespace BridgeBuilder.Core
             if (Result != RunResult.Running)
                 return;
             _airborne = car.Falling ? _airborne + dt : 0;
-            Vec3 carRoom = car.Position / _scale;
             Vec3[] edge = _far.Corners();
             double lowest = Math.Min(_far.Height, Bridge.Pads[_config.StartSurfaceId].Height) * _scale;
 
-            if (Scoring.Reached(carRoom, edge[0], edge[1], _gap) && !car.Falling)
+            if (Scoring.ReachedFarSurface(car.Position, edge[0], edge[1], _gap, _scale) && !car.Falling)
                 Finish(RunResult.Passed, "The car made it across!");
             else if (_airborne > Constants.Car.FallSeconds || car.Position.Y < lowest - 5)
                 Finish(RunResult.Failed, "The car fell.");

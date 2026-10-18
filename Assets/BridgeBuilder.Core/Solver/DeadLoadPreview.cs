@@ -25,7 +25,12 @@ namespace BridgeBuilder.Core
     /// </summary>
     public static class DeadLoadPreview
     {
-        public static NodalLoad[] SelfWeight(SolverInput input, double gravity, double scale)
+        /// <summary>
+        /// Self-weight per node. With <paramref name="standing"/> (per SolverInput member), a member that is not
+        /// standing weighs nothing, so a run can drop a broken member's weight from the nodes it hung from
+        /// (bridge-core DynamicSelfWeight).
+        /// </summary>
+        public static NodalLoad[] SelfWeight(SolverInput input, double gravity, double scale, IReadOnlyList<bool> standing = null)
         {
             var index = new Dictionary<int, int>();
             for (int i = 0; i < input.Nodes.Count; i++)
@@ -35,8 +40,11 @@ namespace BridgeBuilder.Core
                 sections[s.Id] = s;
 
             var down = new double[input.Nodes.Count];
-            foreach (var m in input.Members)
+            for (int k = 0; k < input.Members.Count; k++)
             {
+                if (standing != null && !standing[k])
+                    continue;
+                var m = input.Members[k];
                 var s = sections[m.SectionId];
                 double length = Vec3.Distance(input.Nodes[index[m.NodeA]].Position, input.Nodes[index[m.NodeB]].Position) * scale;
                 double weight = length * s.A * s.Density * gravity;
