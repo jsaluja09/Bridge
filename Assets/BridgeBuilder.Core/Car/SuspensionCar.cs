@@ -121,8 +121,9 @@ namespace BridgeBuilder.Core
             // Tires: cruise control and sideways grip share one friction circle.
             double maxFriction = _grip * normalSum;
             double traction = 0;
-            if (_targetSpeed.HasValue && normalSum > 0)
-                traction = Math.Clamp(p.MassKg * (_targetSpeed.Value - state.Speed) / Math.Max(dt, 0.5) - along, -maxFriction, maxFriction);
+            double? target = state.TargetSpeed ?? _targetSpeed;
+            if (target.HasValue && normalSum > 0)
+                traction = Math.Clamp(p.MassKg * (target.Value - state.Speed) / Math.Max(dt, 0.5) - along, -maxFriction, maxFriction);
             double lateral = 0;
             if (normalSum > 0)
             {

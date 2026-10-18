@@ -76,6 +76,7 @@ namespace BridgeBuilder.Core
         public double Pitch { get; set; }              // extension: nose up, radians
         public double Roll { get; set; }               // extension: left side up, radians
         public bool Falling { get; set; }              // extension: no wheel on any deck or surface
+        public double? TargetSpeed { get; set; }       // extension: this car's cruise speed (traffic); null = the model's default
 
         public CarState Clone() => new CarState
         {
@@ -89,6 +90,7 @@ namespace BridgeBuilder.Core
             Pitch = Pitch,
             Roll = Roll,
             Falling = Falling,
+            TargetSpeed = TargetSpeed,
         };
     }
 

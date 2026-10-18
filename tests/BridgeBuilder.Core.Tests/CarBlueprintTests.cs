@@ -74,7 +74,8 @@ namespace BridgeBuilder.Core.Tests
             var truck = CarPresets.TruckParameters();
             Assert.True(CarBlueprint.WheelRadius(truck) > CarBlueprint.WheelRadius(Standard));
             var small = CarBlueprint.Build(Standard, Constants.Car.Length).Single(p => p.Name == "Body");
-            var big = CarBlueprint.Build(truck, Constants.Car.Length * 1.6).Single(p => p.Name == "Body");
+            double truckLength = truck.Wheelbase * Constants.Car.Length / Constants.Car.Wheelbase;   // same proportions
+            var big = CarBlueprint.Build(truck, truckLength).Single(p => p.Name == "Body");
             Assert.True(big.SizeAlong > small.SizeAlong && big.SizeAcross > small.SizeAcross);
         }
 
