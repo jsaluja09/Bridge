@@ -85,7 +85,7 @@ namespace BridgeBuilder.Game
         string BriefText() =>
             $"<b>{_level.Name}</b>\n{_level.Brief}\n" +
             $"Material {_level.Budget:F0} m   ·   Tests: {PhaseNames}\n" +
-            "<size=70%>A: start</size>";
+            "<size=70%>A: start   ·   X: menu</size>";
 
         string BuildText()
         {

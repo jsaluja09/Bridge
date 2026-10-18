@@ -3,8 +3,8 @@ using UnityEngine;
 namespace BridgeBuilder.Game
 {
     /// <summary>
-    /// Lets the template scene run the game with no setup: if no BridgeGame is in the scene, this hides
-    /// the MR template's demo objects and adds one. Placing a BridgeGame by hand turns this off.
+    /// Lets the template scene run with no setup: if neither a ModeMenu nor a BridgeGame is in the scene, this
+    /// hides the MR template's demo objects and adds the start menu. Placing either by hand turns this off.
     /// </summary>
     static class BridgeBootstrap
     {
@@ -22,7 +22,7 @@ namespace BridgeBuilder.Game
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Start()
         {
-            if (Object.FindAnyObjectByType<BridgeGame>() != null)
+            if (Object.FindAnyObjectByType<BridgeGame>() != null || Object.FindAnyObjectByType<ModeMenu>() != null)
                 return;
 
             foreach (var name in TemplateDemoObjects)
@@ -32,7 +32,7 @@ namespace BridgeBuilder.Game
                     go.SetActive(false);
             }
 
-            new GameObject("BridgeGame").AddComponent<BridgeGame>();
+            new GameObject("Bridge Builder").AddComponent<ModeMenu>();
         }
     }
 }

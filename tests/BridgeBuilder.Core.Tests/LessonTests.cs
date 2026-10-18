@@ -253,4 +253,36 @@ namespace BridgeBuilder.Core.Tests
             Assert.Equal(LessonMotion.CarAlong(Bridge, 2, 1.0), LessonMotion.CarAlong(Bridge, 2, 1.0 + LessonMotion.CrossingSeconds), 6);
         }
     }
+
+    public class LessonStreakTests
+    {
+        static readonly LessonBridge Bridge = GoldenGateLesson.Build().Bridge;
+
+        [Fact]
+        public void Streaks_BlowAcrossTheMainSpan_InsideTheModel()
+        {
+            for (int i = 0; i < LessonMotion.Streaks; i++)
+            {
+                for (double t = 0; t < 10; t += 0.31)
+                {
+                    var (tail, head) = LessonMotion.Streak(Bridge, i, t);
+                    Assert.InRange(head.X, Bridge.MainSpanStart, Bridge.MainSpanEnd);
+                    Assert.Equal(tail.X, head.X);
+                    Assert.Equal(tail.Y, head.Y);
+                    Assert.True(head.Z >= tail.Z);                       // pointing downwind
+                    Assert.InRange(head.Z - tail.Z, 0, 40 + 1e-9);
+                    Assert.InRange(head.Z, -160, 160);
+                }
+            }
+        }
+
+        [Fact]
+        public void Streaks_MoveDownwindAndRepeat()
+        {
+            var a = LessonMotion.Streak(Bridge, 3, 1.0).head;
+            var b = LessonMotion.Streak(Bridge, 3, 1.1).head;
+            Assert.True(b.Z > a.Z || b.Z < a.Z - 100);                      // moved on, or wrapped around
+            Assert.Equal(a, LessonMotion.Streak(Bridge, 3, 1.0).head);
+        }
+    }
 }

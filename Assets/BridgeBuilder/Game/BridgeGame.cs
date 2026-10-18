@@ -65,6 +65,9 @@ namespace BridgeBuilder.Game
         float _resultsShownAt;
         int _bestStars;
 
+        /// <summary>Raised when the player asks to leave the game (X on the first screen).</summary>
+        public event System.Action ExitRequested;
+
         int Stars => _sequence?.Stars ?? 0;
         static double Scale => Constants.Scale.RoomToBridge;
 
@@ -113,6 +116,11 @@ namespace BridgeBuilder.Game
 
         void UpdateBrief()
         {
+            if (_pointer.ClearPressed)
+            {
+                ExitRequested?.Invoke();         // back to the start menu (when there is one)
+                return;
+            }
             if (_pointer.PrimaryPressed || _pointer.TriggerPressed)
             {
                 _taps.Clear();

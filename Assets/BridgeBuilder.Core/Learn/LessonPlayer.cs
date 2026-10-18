@@ -101,6 +101,38 @@ namespace BridgeBuilder.Core
         public const int Cars = 6;
         public const double SwayPeriodSeconds = 4;
 
+        public const int Streaks = 24;
+        const double StreakSpeed = 60;          // real m/s across the bridge (it is a demo, not a forecast)
+        const double StreakLength = 40;         // real m
+        const double StreakReach = 160;         // real m either side of the bridge's centerline
+
+        /// <summary>
+        /// Wind streak i at `time` (real meters): blowing across the bridge (+z) at a fixed spot along it and a
+        /// fixed height near the deck, wrapping when it leaves the model. From time alone, like the game's snow.
+        /// </summary>
+        public static (Vec3 tail, Vec3 head) Streak(LessonBridge b, int i, double time)
+        {
+            double along = b.MainSpanStart + b.MainSpan * Fraction(i, 1);
+            double y = b.DeckY * (0.4 + 1.2 * Fraction(i, 2));
+            double width = 2 * StreakReach;
+            double head = -StreakReach + (time * StreakSpeed + Fraction(i, 3) * width) % width;
+            double tail = Math.Max(-StreakReach, head - StreakLength);
+            return (new Vec3(along, y, tail), new Vec3(along, y, head));
+        }
+
+        /// <summary>A fixed pseudo-random number in [0, 1) for streak i.</summary>
+        static double Fraction(int i, int salt)
+        {
+            unchecked
+            {
+                uint h = (uint)i * 2654435761u ^ (uint)salt * 97531u;
+                h ^= h >> 15;
+                h *= 2246822519u;
+                h ^= h >> 13;
+                return (h & 0xFFFFFF) / (double)0x1000000;
+            }
+        }
+
         /// <summary>Where a car is along the bridge (x, real meters) at `time`: cars spaced evenly, looping over the main span.</summary>
         public static double CarAlong(LessonBridge b, int car, double time)
         {
