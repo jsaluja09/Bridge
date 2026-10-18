@@ -11,11 +11,14 @@ namespace BridgeBuilder.Core.Tests
         const double Scale = 20;
         const double Dt = 1.0 / 60;
 
-        /// <summary>A truss (deck at bridge world x 0..20, z -2..2, top y 15; barely sags) with room for `capacity` cars.</summary>
-        static (CoupledStep step, SpyIntegrator frame) Make(int capacity)
+        /// <summary>
+        /// A stiff bridge (the test truss, or the dense under-deck truss when it must hold a full row of cars) with
+        /// room for `capacity` cars. Deck at bridge world x 0..20, z -2..2, top y 15.
+        /// </summary>
+        static (CoupledStep step, SpyIntegrator frame) Make(int capacity, bool dense = false)
         {
             var pads = Rooms.Pads();
-            var bridge = BridgeCompiler.Compile(Rooms.Truss(pads), pads, Scale);
+            var bridge = BridgeCompiler.Compile(dense ? Rooms.UnderTruss(pads) : Rooms.Truss(pads), pads, Scale);
             SpyIntegrator spy = null;
             var car = new SuspensionCar(Constants.Loads.Gravity, Constants.Car.DefaultGrip, Constants.Car.CruiseSpeed);
             var step = new CoupledStep(car, pads, bridge.Decks, input => spy = new SpyIntegrator(input), carCapacity: capacity);
@@ -36,21 +39,55 @@ namespace BridgeBuilder.Core.Tests
             Assert.Equal(-1, step.AddCar(step.RestingCar(OnDeck(10, 0), Vec3.UnitX)));
         }
 
+        static double CarWeight => Constants.Human.CarMassKg * Constants.Loads.Gravity;
+
         [Fact]
-        public void TwoCarsOnTheDeck_BothLoadTheBridge()
+        public void TwoCarsOnTheDeck_EachLoadTheBridgeWithItsWeight()
         {
             var (step, frame) = Make(2);
             step.RemoveCar(0);
             Assert.Equal(0, step.AddCar(step.RestingCar(OnDeck(8, -1), Vec3.UnitX)));
             Assert.Equal(1, step.AddCar(step.RestingCar(OnDeck(12, 1), -Vec3.UnitX)));
 
-            step.Step(null, Dt, null);              // cars find the deck; their loads land next step
-            double wheels = Enumerable.Range(0, 2).Sum(s => step.CarAt(s).WheelLoads.Sum());
+            step.Step(null, Dt, null);              // cars find the deck; their weight lands next step
             step.Step(null, Dt, null);
 
             double carsOnBridge = TotalDown(frame.StepLoads[1]) - TotalDown(frame.StepLoads[0]);
-            Assert.Equal(wheels, carsOnBridge, 6);
-            Assert.True(wheels > 1.5 * Constants.Human.CarMassKg * Constants.Loads.Gravity, $"wheel loads {wheels} N");
+            Assert.Equal(2 * CarWeight, carsOnBridge, 6);
+        }
+
+        [Fact]
+        public void ExplicitWheelLoads_StillDriveTheFirstCar()
+        {
+            var (step, frame) = Make(1);
+            step.RemoveCar(0);
+            step.AddCar(step.RestingCar(OnDeck(10, 0), Vec3.UnitX));
+            step.Step(new WheelLoad[0], Dt, null);  // finds the deck
+            step.Step(new[] { new WheelLoad(0, 5000), new WheelLoad(3, 1234) }, Dt, null);
+
+            Assert.Equal(6234, TotalDown(frame.StepLoads[1]) - TotalDown(frame.StepLoads[0]), 6);
+        }
+
+        [Fact]
+        public void RowOfParkedCars_StaysSteady()
+        {
+            // Many cars on light deck joints once bounced themselves apart (added-mass instability).
+            var (step, frame) = Make(12, dense: true);
+            step.RemoveCar(0);
+            for (int i = 0; i < 12; i++)
+            {
+                var car = step.RestingCar(OnDeck(2 + (i / 2) * 3.25, i % 2 == 0 ? 1 : -1), Vec3.UnitX);
+                car.TargetSpeed = 0;
+                step.AddCar(car);
+            }
+            for (int i = 0; i < 600; i++)
+                step.Step(null, Dt, null);
+
+            for (int s = 0; s < 12; s++)
+                Assert.InRange(step.CarAt(s).WheelLoads.Sum(), 0.97 * CarWeight, 1.03 * CarWeight);
+            Assert.All(step.Frame.Active, standing => Assert.True(standing));
+            double last = TotalDown(frame.StepLoads[599]) - TotalDown(frame.StepLoads[0]);
+            Assert.Equal(12 * CarWeight, last, 3);
         }
 
         [Fact]

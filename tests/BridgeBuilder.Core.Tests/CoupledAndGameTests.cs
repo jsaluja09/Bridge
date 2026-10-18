@@ -146,6 +146,24 @@ namespace BridgeBuilder.Core.Tests
             return m;
         }
 
+        /// <summary>The bare deck plus a dense Warren truss under each rail: `panels` triangles, `depth` deep.</summary>
+        public static BridgeModel UnderTruss(Pad[] pads, int panels = 10, double depth = 0.1)
+        {
+            var m = BareDeck(pads);
+            double step = 1.0 / panels;
+            foreach (double z in new[] { -0.1, 0.1 })
+            {
+                var apex = Enumerable.Range(0, panels).Select(i => P((i + 0.5) * step, Top - depth, z)).ToArray();
+                Draw(m, pads, apex);
+                for (int i = 0; i < panels; i++)
+                {
+                    Draw(m, pads, P(i * step, Top, z), apex[i]);
+                    Draw(m, pads, apex[i], P((i + 1) * step, Top, z));
+                }
+            }
+            return m;
+        }
+
         public static BridgeRun Run(BridgeModel m, Pad[] pads, ChallengeConfig c = null)
         {
             var bridge = BridgeCompiler.Compile(m, pads, Constants.Scale.RoomToBridge);

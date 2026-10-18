@@ -36,8 +36,13 @@ namespace BridgeBuilder.Core
     /// displacements out are room units.
     ///
     /// Cars live in fixed slots so a slot index stays valid while traffic comes and goes. Reset puts the first
-    /// car in slot 0 on the start pad; AddCar and RemoveCar manage the rest. The IDynamicSolver wheel loads
-    /// drive slot 0; every other car uses its own loads from the previous step.
+    /// car in slot 0 on the start pad; AddCar and RemoveCar manage the rest.
+    ///
+    /// Two ways a car loads the bridge. Given IDynamicSolver wheel loads, slot 0 applies them as they are: the
+    /// single test car's springs push on the deck, bumps and all. Every other car (and slot 0 when no loads are
+    /// given) applies its weight, shared over the wheels that touched something last step. Its springs still
+    /// ride the moving deck, but the deck does not feel their one-step-late push: with many cars on light deck
+    /// joints that push feeds the bounce (an added-mass instability) and shakes the bridge apart.
     /// </summary>
     public sealed class CoupledStep : IDynamicSolver
     {
@@ -45,6 +50,7 @@ namespace BridgeBuilder.Core
         {
             public int Deck, Tri;          // Deck -1: on a pad or nothing (no bridge load)
             public double Wa, Wb, Wc;
+            public bool Touching;          // on a pad or a deck
         }
 
         readonly ICarModel _car;
@@ -120,7 +126,7 @@ namespace BridgeBuilder.Core
                     _samples[slot] = new DeckSample[wheels];
                 }
                 for (int w = 0; w < wheels; w++)
-                    _contacts[slot][w].Deck = -1;
+                    _contacts[slot][w] = new Contact { Deck = -1 };
                 return slot;
             }
             return -1;
@@ -186,8 +192,7 @@ namespace BridgeBuilder.Core
             _debris.ClearForces();
             for (int slot = 0; slot < _cars.Length; slot++)
             {
-                var car = _cars[slot];
-                if (car == null)
+                if (_cars[slot] == null)
                     continue;
                 if (slot == 0 && previousWheelLoads != null)
                 {
@@ -196,8 +201,7 @@ namespace BridgeBuilder.Core
                 }
                 else
                 {
-                    for (int w = 0; w < car.WheelLoads.Length; w++)
-                        LoadWheel(slot, w, car.WheelLoads[w]);
+                    LoadWeight(slot);
                 }
             }
             _frame.Step(_loads, dt);
@@ -240,6 +244,26 @@ namespace BridgeBuilder.Core
             var weight = DeadLoadPreview.SelfWeight(_input, _gravity, _scale, _frame.Active);
             for (int i = 0; i < _static.Length; i++)
                 _static[i] = weight[i].Force + (ExtraStaticLoads != null ? ExtraStaticLoads[i] : Vec3.Zero);
+        }
+
+        /// <summary>A car's weight, shared equally over the wheels that touched a pad or deck last step.</summary>
+        void LoadWeight(int slot)
+        {
+            var contacts = _contacts[slot];
+            int touching = 0;
+            foreach (var c in contacts)
+            {
+                if (c.Touching)
+                    touching++;
+            }
+            if (touching == 0)
+                return;
+            double share = _config.Car.MassKg * _gravity / touching;
+            for (int w = 0; w < contacts.Length; w++)
+            {
+                if (contacts[w].Touching)
+                    LoadWheel(slot, w, share);
+            }
         }
 
         /// <summary>Spreads one wheel's load over the deck triangle it touched last step.</summary>
@@ -320,6 +344,7 @@ namespace BridgeBuilder.Core
             }
 
             sample.HasDeck = best > double.MinValue;
+            contact.Touching = sample.HasDeck;
             sample.Height = sample.HasDeck ? best : 0;
             return sample;
         }
