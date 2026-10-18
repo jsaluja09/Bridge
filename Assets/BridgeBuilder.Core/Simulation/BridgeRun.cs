@@ -38,6 +38,11 @@ namespace BridgeBuilder.Core
         public double PeakUtilization;
         public double WorstUtilization;
         public int WeakMember = -1;       // SolverInput index of the member to point at (BridgeRun.WeakMember)
+        public double Progress;           // 0..1 toward passing: never goes back, frozen at the result, 1 on a pass
+        public int CarsCrossed;           // traffic: cars across so far (0 for the single car), frozen at the result
+        public int CarsSent;              // traffic: cars that have driven on so far, frozen at the result
+        public int CarsTotal;             // traffic: cars this test sends; 0 for the single car
+        public double JamHeldSeconds;     // jam: how long the full bridge has held so far, frozen at the result
     }
 
     /// <summary>
@@ -55,6 +60,8 @@ namespace BridgeBuilder.Core
         readonly Traffic _traffic;         // null for the single test car
         readonly Pad _far;
         readonly Vec3 _gap;
+        readonly Vec3 _carStart;           // bridge world, middle of the start pad
+        readonly double _toFarEdge;        // from _carStart along _gap to the far pad's front edge, bridge world
         readonly double _scale;
         WheelLoad[] _wheelLoads = Array.Empty<WheelLoad>();
         readonly HashSet<int> _lost = new HashSet<int>();
@@ -82,6 +89,17 @@ namespace BridgeBuilder.Core
         /// <summary>The run timed out with nothing fallen.</summary>
         public bool Stuck { get; private set; }
 
+        /// <summary>How far the test has got toward passing, 0..1. Never goes back; frozen once the result is in, and 1 on a pass.</summary>
+        public double Progress { get; private set; }
+        /// <summary>Traffic: cars across so far (0 for the single car). Frozen at the result.</summary>
+        public int CarsCrossed { get; private set; }
+        /// <summary>Traffic: cars that have driven on so far. Frozen at the result.</summary>
+        public int CarsSent { get; private set; }
+        /// <summary>Traffic: cars this test sends; 0 for the single car.</summary>
+        public int CarsTotal => _traffic?.Quota ?? 0;
+        /// <summary>Jam: how long the full bridge has held so far. Frozen at the result.</summary>
+        public double JamHeldSeconds { get; private set; }
+
         /// <summary>The run's outcome as phase feedback reads it.</summary>
         public PhaseResult PhaseResult => new PhaseResult(Result == RunResult.Passed,
             FirstLostMember >= 0 ? _coupled.Frame.BrokenMode[FirstLostMember] : FailureMode.None, Stuck, PeakUtilization);
@@ -98,6 +116,8 @@ namespace BridgeBuilder.Core
             var start = bridge.Pads[config.StartSurfaceId];
             _far = bridge.Pads[1 - config.StartSurfaceId];
             _gap = start.Forward;
+            _carStart = (start.FrontCenter - start.Forward * (start.Depth / 2)) * _scale;
+            _toFarEdge = Vec3.Dot(_far.FrontCenter * _scale - _carStart, _gap);
             ApplyWeather();
             _coupled.Reset(bridge.Input, config);
             if (config.Traffic != null)
@@ -149,6 +169,7 @@ namespace BridgeBuilder.Core
                 return;
             _airborne = car.Falling ? _airborne + dt : 0;
             Vec3[] edge = _far.Corners();
+            Progress = Math.Max(Progress, SingleCarProgress(car.Position));
 
             if (Scoring.ReachedFarSurface(car.Position, edge[0], edge[1], _gap, _scale) && !car.Falling)
                 Finish(RunResult.Passed, "The car made it across!");
@@ -170,6 +191,10 @@ namespace BridgeBuilder.Core
 
             if (Result != RunResult.Running)
                 return;
+            Progress = Math.Max(Progress, _traffic.Progress);
+            CarsCrossed = _traffic.Crossed;
+            CarsSent = _traffic.Spawned;
+            JamHeldSeconds = _traffic.JamHeldSeconds;
             if (_traffic.Fell > 0)
                 Finish(RunResult.Failed, _traffic.Fell == 1 ? "A car fell." : $"{_traffic.Fell} cars fell.");
             else if (_traffic.Finished)
@@ -228,10 +253,15 @@ namespace BridgeBuilder.Core
             }
         }
 
+        /// <summary>The single car's share of the way from the middle of the start pad to the far pad's front edge, 0..1.</summary>
+        double SingleCarProgress(Vec3 car) => _toFarEdge > 0 ? Math.Clamp(Vec3.Dot(car - _carStart, _gap) / _toFarEdge, 0, 1) : 0;
+
         void Finish(RunResult result, string message)
         {
             Result = result;
             Message = message;
+            if (result == RunResult.Passed)
+                Progress = 1;
         }
 
         public void Write(RunSnapshot snap)
@@ -277,6 +307,11 @@ namespace BridgeBuilder.Core
             snap.PeakUtilization = PeakUtilization;
             snap.WorstUtilization = WorstUtilization;
             snap.WeakMember = WeakMember;
+            snap.Progress = Progress;
+            snap.CarsCrossed = CarsCrossed;
+            snap.CarsSent = CarsSent;
+            snap.CarsTotal = CarsTotal;
+            snap.JamHeldSeconds = JamHeldSeconds;
         }
 
         /// <summary>Runs to a result. For tests.</summary>
